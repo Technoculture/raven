@@ -1,21 +1,21 @@
 {
   "project_info": {
-    "project_number": "257310726313",
-    "project_id": "raven-c2659",
-    "storage_bucket": "raven-c2659.firebasestorage.app"
+    "project_number": "276649097652",
+    "project_id": "relay-server-2f726",
+    "storage_bucket": "relay-server-2f726.firebasestorage.app"
   },
   "client": [
     {
       "client_info": {
-        "mobilesdk_app_id": "1:257310726313:android:f0ee0638ffdfd773a631b8",
+        "mobilesdk_app_id": "1:276649097652:android:9383f582a549209ee3dae1",
         "android_client_info": {
-          "package_name": "raven.thecommit.company"
+          "package_name": "raven.commit"
         }
       },
       "oauth_client": [],
       "api_key": [
         {
-          "current_key": "AIzaSyCf69Jla-6oxw9GXL2rcuwJpLhSbk5F_gQ"
+          "current_key": "AIzaSyCpMbZid5Cd6WjLPIuQrnpIHMQ8CXKvSJc"
         }
       ],
       "services": {
