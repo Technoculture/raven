@@ -1,7 +1,7 @@
 {
   "expo": {
     "name": "Raven",
-    "slug": "Raven",
+    "slug": "raven",
     "scheme": "raven.thecommit.company",
     "version": "1.1.1",
     "orientation": "portrait",
@@ -77,9 +77,9 @@
         "origin": false
       },
       "eas": {
-        "projectId": "3a173ddd-f22a-4f81-8279-40dcee6c29d5"
+        "projectId": "0e979155-f06a-4cff-a915-80927e7ba62e"
       }
     },
-    "owner": "the-commit-company"
+    "owner": "prince86"
   }
 }
