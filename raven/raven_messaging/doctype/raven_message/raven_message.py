@@ -275,7 +275,6 @@ class RavenMessage(Document):
 
 			return
 
-		# If not a part of a AI Thread, then check if this is a DM to a bot - if yes, then we should create a new thread
 
 		is_dm = channel_doc.is_direct_message
 
@@ -297,13 +296,9 @@ class RavenMessage(Document):
 
 		bot = frappe.get_cached_doc("Raven Bot", peer_user_doc.bot)
 		if not bot.is_ai_bot:
-			# print(self.as_dict())
-			# for key, value in self.items():
-				# print(f"{key}: {value}")
-			# return
+			
 
 			handle_bot_command(message=self , bot=bot)
-			# return
 
 		frappe.enqueue(
 			method=handle_bot_dm,
@@ -344,13 +339,8 @@ class RavenMessage(Document):
 
 		bot = frappe.get_cached_doc("Raven Bot", self.bot)
 		if not bot.is_ai_bot:
-			# print(self.as_dict())
-			# for key, value in self.items():
-				# print(f"{key}: {value}")
-			# return
-
+		
 			handle_bot_command(message=self , bot=bot)
-			# return
 
 		frappe.enqueue(
 			method=handle_bot_dm,
