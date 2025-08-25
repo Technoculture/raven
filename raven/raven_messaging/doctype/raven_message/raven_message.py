@@ -2,13 +2,14 @@
 # For license information, please see license.txt
 import datetime
 import json
-
+import re
 import frappe
 from bs4 import BeautifulSoup
 from frappe import _
 from frappe.model.document import Document
 from frappe.utils import get_datetime, get_system_timezone
 from pytz import timezone, utc
+from frappe.utils import now
 
 from raven.ai.ai import handle_ai_thread_message, handle_bot_dm
 from raven.api.raven_channel import get_peer_user
@@ -27,20 +28,35 @@ from raven.utils import (
 
 
 def handle_bot_command(message, bot):
-    command = message.text.strip().lower()
-    bs = BeautifulSoup(command, 'html.parser')
-    text = bs.get_text()
+    bot_command = None
+    hornet = message.json["content"][0]["content"]
+    print(hornet)
+    # print(message.as_dict())
+
+    for item in hornet:
+       if item.get("type") == "text":
+         bot_command = item.get("text")
+	
+    reply = ''
+
     command_map = {
         "/work_plan": "Update Your Todays Work Plan ",
         "/work_update": "Hello Mention your Work Update.",
+		"/help" : "List of Available Commands <br/> 1. /work_plan  ie @HelloBot /work_update Working on Issue Number #34 <br/> 2. /work_update\n @HelloBot /work_update Completed Issue number #34 <br/>"
 
     }
+    print(bot_command  , "bot_command")
+    print(repr(bot_command), "repr(bot_command)")
 
-    if text == "/work_plan":
-        from frappe.utils import now
-        reply = f"The current server time is: {now()}"
+    if bot_command.strip() == "/work_plan":
+        reply = f"{command_map[bot_command.strip()]}"
+    elif bot_command.strip() == "/work_update":
+        reply = f"{command_map[bot_command.strip()]}"
+    elif bot_command.strip() == "/help":
+        reply = f"{command_map[bot_command.strip()]}"
     else:
-        reply = command_map.get(text, "Unknown command. Try /help")
+        reply = command_map.get(bot_command, f"{bot_command} Unknown command. Try /help")
+    # print(reply , bot , bot.as_dict(), "reponse against mention")
 
     send_bot_message(bot=bot.name, to_channel=message.channel_id, content=reply)
 
@@ -296,9 +312,10 @@ class RavenMessage(Document):
 
 		bot = frappe.get_cached_doc("Raven Bot", peer_user_doc.bot)
 		if not bot.is_ai_bot:
+			return
 			
 
-			handle_bot_command(message=self , bot=bot)
+			# handle_bot_command(message=self , bot=bot)
 
 		frappe.enqueue(
 			method=handle_bot_dm,
@@ -310,7 +327,7 @@ class RavenMessage(Document):
 		)
 
 	def handle_mention_on_group(self):
-		print(self.as_dict())
+		# print(self.as_dict())
 		
 		if self.is_bot_message:
 			return
@@ -336,20 +353,27 @@ class RavenMessage(Document):
 			)
 
 			return
+		mentioned_bot = self.content
+		bot_pattern = re.search(r'@(\w+)' , mentioned_bot)
+		if bot_pattern:
+			bot_name = bot_pattern.group(1)
+			# print(name)  
+			bot = frappe.get_cached_doc("Raven Bot", bot_name)
+			print(bot.as_dict())
+			if not bot.is_ai_bot:
+				handle_bot_command(message=self , bot=bot)
+		# 		frappe.enqueue(
+		# 	method=handle_bot_dm,
+		# 	message=self,
+		# 	bot=bot,
+		# 	timeout=600,
+		# 	job_name="handle_bot_dm",
+		# 	at_front=True,
+		# )
 
-		bot = frappe.get_cached_doc("Raven Bot", self.bot)
-		if not bot.is_ai_bot:
 		
-			handle_bot_command(message=self , bot=bot)
-
-		frappe.enqueue(
-			method=handle_bot_dm,
-			message=self,
-			bot=bot,
-			timeout=600,
-			job_name="handle_bot_dm",
-			at_front=True,
-		)
+			# print(bot_name)
+		
 
 
 
