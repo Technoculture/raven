@@ -160,8 +160,8 @@ doc_events = {
 scheduler_events = {
 	"cron": {
 		"*/5 * * * *": ["raven.scheduler.close_expired_polls.close_expired_polls"],
-		"0 10 * * *": ["raven.scheduler.morning_reminder.post_work_plan"],
-        "0 19 * * *":["raven.scheduler.morning_reminder.post_work_update"]
+		"0 10 * * *": ["raven.scheduler.work_update_reminder.post_work_plan"],
+        "0 19 * * *":["raven.scheduler.work_update_reminder.post_work_update"]
 	}
 }
 

@@ -215,7 +215,6 @@ def clear_thread_reply_count_cache(thread_id: str):
 	frappe.cache().hdel("raven:thread_reply_count", thread_id)
 
 
-# your_app/utils.py
 
 def push_message_to_channel(channel_id, text, is_bot_message=False, bot_user=None):
     doc = frappe.get_doc({
@@ -229,3 +228,13 @@ def push_message_to_channel(channel_id, text, is_bot_message=False, bot_user=Non
 
 
     doc.insert(ignore_permissions=True)
+
+def create_doc(data, ignore_permissions=False):
+  
+    doc = frappe.get_doc({
+        "doctype": "Work Updates",
+        **data
+    })
+
+    doc.insert(ignore_permissions=ignore_permissions)
+    return doc
