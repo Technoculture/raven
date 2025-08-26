@@ -3,6 +3,7 @@
 import datetime
 import json
 import re
+from datetime import date , time
 from datetime import datetime
 import frappe
 from bs4 import BeautifulSoup
@@ -48,19 +49,27 @@ def bifurcate(text):
 def handle_bot_command(message, bot):
     bot_command_raw = None
     bot_command = None
+    today = date.today()
     hornet = message.json["content"][0]["content"]
-    print(message.as_dict() , "messsage")
+    response_output = False
     update_message = None
+    s_reply = f"Update Submitted Successfully"
+
     for item in hornet:
        if item.get("type") == "text":
          bot_command_raw = item.get("text").strip()
-        #  print(bot_command_raw , "bot command raw")
 		 
          bot_command , update_message = bifurcate(bot_command_raw)
 		 
-         print(bot_command , "bot command" ,  update_message , "Bifurcation Result")
 	
     reply = ''
+    existing = frappe.get_list(
+        "Work Updates",
+        filters={"email": message.owner, "log_date": today},
+        fields=["name"]
+    )
+    print(existing , "existing values are in this module")
+
 
     command_map = {
         "/work_plan": "Update Your Todays Work Plan ",
@@ -75,29 +84,57 @@ def handle_bot_command(message, bot):
        reply = "Length of Messge cannot be less than 10 Characters"
     elif bot_command.strip() == "/work_plan":
         create_doc({
-			"log_time":datetime.now(),
+			"log_date":date.today(),
 			"email":message.owner,
-			"work_update":update_message,
+			"table_fkqe":[{
+				"task":update_message,
+				"time_log":datetime.now().time()
+
+			}],
 			"type":"Plan"
 		})
-        reply = f"Submitted Work Plan Approved {message.owner}"
+        response_output = True
+        if len(existing)>=1:
+           reply = f"Work Plan Updated {message.owner}"
+        else:
+           reply = f"Submitted Work Update Approved {message.owner}"
+		   
+        # reply = f"Submitted Work Plan Approved {message.owner}"
 		
     elif bot_command.strip() == "/work_update":
 
         create_doc({
-			"log_time":datetime.now(),
+			"log_date":date.today(),
 			"email":message.owner,
-			"work_update":update_message,
+			"table_fkqe":[{
+				"task":update_message,
+				"time_log":datetime.now().time()
+
+			}],
 			"type":"Update"
 		})
-        reply = f"Submitted Work Update Approved {message.owner}"
+        response_output = True
+		
+        if len(existing)>=1:
+           reply = f"Work Updated List Updated {message.owner}"
+        else:
+           reply = f"Submitted Work Update Approved {message.owner}"
+		   
+			
     elif bot_command.strip() == "/help":
         reply = f"{command_map[bot_command.strip()]}"
     else:
         reply = command_map.get(bot_command, f"{bot_command} Unknown command. Try /help")
-    # print(reply , bot , bot.as_dict(), "reponse against mention")
 
-    send_bot_message(bot=bot.name, to_channel=message.channel_id, content=reply)
+    if response_output:
+      send_bot_message(bot=bot.name, to_channel="Technoculture-updates", content=reply)
+      send_bot_message(bot=bot.name, to_channel=message.channel_id, content=s_reply)
+
+    else:
+       send_bot_message(bot=bot.name, to_channel=message.channel_id, content=reply)
+	  
+	
+
 
 
 
@@ -293,8 +330,9 @@ class RavenMessage(Document):
 			self.publish_unread_count_event(last_message_details)
 
 		if self.message_type == "Text":
-			self.handle_ai_message()
-			self.handle_mention_on_group()
+			# self.handle_ai_message()
+			self.update_on_group()
+			# self.
 
 		self.send_push_notification()
 
@@ -302,7 +340,6 @@ class RavenMessage(Document):
 
 		# If the message was sent by a bot, do not call the function
 		
-		# print("inside of ai message" ,self.as_dict())
 		if self.is_bot_message:
 			return
 		
@@ -365,19 +402,22 @@ class RavenMessage(Document):
 			at_front=True,
 		)
 
-	def handle_mention_on_group(self):
+
+	def update_on_group(self):
 		# print(self.as_dict())
+		# print(self.channel_id , "channel ID")
 		
 		if self.is_bot_message:
 			return
-		
+		# print("BOT Values")
+
 
 		raven_settings = frappe.get_cached_doc("Raven Settings")
 		if not raven_settings.enable_ai_integration:
 			return
 
 
-		channel_doc = frappe.get_cached_doc("Raven Channel", self.channel_id)
+		channel_doc = frappe.get_cached_doc("Raven Channel", "Technoculture-updates")
 
 		is_ai_thread = channel_doc.is_ai_thread
 
@@ -393,12 +433,17 @@ class RavenMessage(Document):
 
 			return
 		mentioned_bot = self.content
+		channel_vlue = frappe.get_doc("Raven Channel" ,self.channel_id)
+
+		# print(channel_vlue.as_dict())
+		bot_name = channel_vlue.channel_name.split(" _ ")[1]
 		bot_pattern = re.search(r'@(\w+)' , mentioned_bot)
-		if bot_pattern:
-			bot_name = bot_pattern.group(1)
-			# print(name)  
+		# print(bot_name , "hot Name")
+		# print(bot_pattern , "pattern")
+		if bot_name:
+			# bot_name = bot_pattern.group(1)
 			bot = frappe.get_cached_doc("Raven Bot", bot_name)
-			# print(bot.as_dict())
+			print(bot ,"botter")
 			if not bot.is_ai_bot:
 				handle_bot_command(message=self , bot=bot)
 		# 		frappe.enqueue(
@@ -411,7 +456,9 @@ class RavenMessage(Document):
 		# )
 
 		
-			# print(bot_name)
+		
+
+		
 		
 
 

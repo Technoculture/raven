@@ -229,8 +229,62 @@ def push_message_to_channel(channel_id, text, is_bot_message=False, bot_user=Non
 
     doc.insert(ignore_permissions=True)
 
+from datetime import date
+import frappe
+
 def create_doc(data, ignore_permissions=False):
-  
+    today = date.today()
+
+    # Check if a Work Updates doc already exists for today
+    existing = frappe.get_list(
+        "Work Updates",
+        filters={"employee": data.get("employee"), "date": today},
+        fields=["name"]
+    )
+
+    if existing:
+        # Fetch the existing doc
+        doc = frappe.get_doc("Work Updates", existing[0].name)
+
+        # Option 1: Append new tasks to child table
+        for task in data.get("work_update_tasks", []):
+            doc.append("work_update_tasks", task)
+
+        # Optionally update any other fields from data
+        if "title" in data:
+            doc.title = data["title"]
+
+        doc.save(ignore_permissions=ignore_permissions)
+        return doc
+
+    # If not existing, create new
+    doc = frappe.get_doc({
+        "doctype": "Work Updates",
+        **data
+    })
+
+    doc.insert(ignore_permissions=ignore_permissions)
+    return doc
+
+def create_doc(data, ignore_permissions=False):
+    today = date.today()
+
+    existing = frappe.get_list(
+        "Work Updates",
+        filters={"email": data["email"], "log_date": today , "type":data["type"]},
+        fields=["name"]
+    )
+
+    if existing:
+        doc = frappe.get_doc("Work Updates", existing[0].name)
+
+        for task in data.get("table_fkqe", []):
+            doc.append("table_fkqe", task)
+
+        doc.save(ignore_permissions=ignore_permissions)
+        return doc
+
+    # If not existing, create new
     doc = frappe.get_doc({
         "doctype": "Work Updates",
         **data
