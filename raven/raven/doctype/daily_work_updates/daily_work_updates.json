@@ -8,6 +8,8 @@
   "email",
   "column_break_yqpp",
   "log_date",
+  "column_break_xmnw",
+  "type",
   "section_break_cpnq",
   "log_table"
  ],
@@ -40,12 +42,22 @@
    "label": "Log Table",
    "options": "Task Log",
    "reqd": 1
+  },
+  {
+   "fieldname": "column_break_xmnw",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "type",
+   "fieldtype": "Select",
+   "label": "Type",
+   "options": "Plan\nUpdate"
   }
  ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2025-08-31 18:11:56.081205",
+ "modified": "2025-09-02 12:46:36.312146",
  "modified_by": "Administrator",
  "module": "Raven",
  "name": "Daily Work Updates",

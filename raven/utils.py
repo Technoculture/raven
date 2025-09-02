@@ -1,5 +1,8 @@
 import frappe
-
+import json
+import datetime
+import io
+import contextlib
 
 def get_raven_room():
 	"""
@@ -250,3 +253,201 @@ def clear_thread_reply_count_cache(thread_id: str):
 	Clear the thread reply count cache
 	"""
 	frappe.cache().hdel("raven:thread_reply_count", thread_id)
+
+
+# Handling Non Agentic Bots
+def handle_non_agentic_bots(message , bot):
+	result = bifurcate_command(message_dict=message.as_dict())
+	return result
+    
+
+def bifurcate_command(message_dict):
+    """
+    Extracts and transforms message details into a simplified structure:
+    - For Text messages: msgType, command, chat
+    - For File messages: msgType, file
+    Returns None if required fields are missing or malformed.
+    """
+    try:
+        message_type = message_dict.get("message_type")
+        if not message_type:
+            return None
+
+        result = {
+            "msgType": message_type
+        }
+
+        if message_type == "File":
+            file_path = message_dict.get("file")
+            if not file_path:
+                return None
+            result["file"] = file_path
+            return result
+
+        elif message_type == "Text":
+            json_str = message_dict.get("json")
+            if not json_str:
+                return None
+
+            doc_json = json.loads(json_str)
+            content_items = doc_json.get("content", [])[0].get("content", [])
+
+            command_mention = None
+            text_value = None
+
+            for item in content_items:
+                if item.get("type") == "commandMention":
+                    command_mention = item.get("attrs", {}).get("id")
+                elif item.get("type") == "text":
+                    text_value = item.get("text")
+
+            if not command_mention or not text_value:
+                return None
+
+            result["command"] = command_mention
+            result["chat"] = text_value.strip()
+            return result
+
+        return None
+
+    except (json.JSONDecodeError, IndexError, AttributeError, TypeError):
+        return None
+
+
+
+def execute_bot_script(script, variables=None, allowed_builtins=None, entrypoint=None):
+    """
+    Execute a script with injected variables and capture output and result.
+
+    Args:
+        script (str): Python script code (function or inline block).
+        variables (dict): Variables to inject into the script context.
+        allowed_builtins (dict): Allowed built-ins (default: {'print': print}).
+        entrypoint (str): Optional function name to invoke after script executes.
+
+    Returns:
+        dict: {
+            "success": bool,
+            "output": str,
+            "error": str or None,
+            "result": Any or None
+        }
+    """
+    output_buffer = io.StringIO()
+    error = None
+    result = None
+
+    if allowed_builtins is None:
+        allowed_builtins = {"print": print, "len": len, "range": range ,     "__import__": __import__ }
+
+    safe_globals = {
+        "__builtins__": allowed_builtins
+    }
+
+    if variables:
+        safe_globals.update(variables)
+
+    try:
+        with contextlib.redirect_stdout(output_buffer):
+            exec(script, safe_globals)
+
+            if entrypoint and entrypoint in safe_globals:
+                result = safe_globals[entrypoint](safe_globals.get("data"))
+
+            elif "result" in safe_globals:
+                result = safe_globals["result"]
+
+        success = True
+
+    except Exception as e:
+        success = False
+        error = str(e)
+
+    return {
+        "success": success,
+        "output": output_buffer.getvalue().strip(),
+        "error": error,
+        "result": result
+    }
+
+
+
+def get_map(doctype_name):
+    meta = frappe.get_meta(doctype_name)
+    data = {}
+
+    for df in meta.fields:
+        if df.fieldtype in ("Section Break", "Column Break"):
+            continue
+
+        if df.fieldtype == "Table":
+            child_meta = frappe.get_meta(df.options)
+            child_row = {}
+            for child_df in child_meta.fields:
+                if child_df.fieldtype not in ("Section Break", "Column Break"):
+                    child_row[child_df.fieldname] = None
+            data[df.fieldname] = [child_row]
+        else:
+            data[df.fieldname] = None
+
+    return data
+
+
+
+def data_builder(doctype_name, overrides=None):
+    """
+    Get the default structure of a DocType (including child tables),
+    and apply the values provided in `overrides`.
+
+    Args:
+        doctype_name (str): The parent DocType
+        overrides (dict): Values to insert into the default structure
+
+    Returns:
+        dict: Fully structured data dict
+    """
+    base_data = get_map(doctype_name)
+
+    def deep_update(target, updates):
+        for key, value in updates.items():
+            if isinstance(value, dict) and isinstance(target.get(key), dict):
+                deep_update(target[key], value)
+            else:
+                target[key] = value
+
+    if overrides:
+        deep_update(base_data, overrides)
+
+    return base_data
+
+
+
+def get_overrides_for_command(doctype, command_context, message):
+    """
+    Generates overrides based on command context.
+
+    Args:
+        doctype (str): Target DocType
+        command_context (dict): The parsed command tree
+        message (object): The message object (e.g., self)
+
+    Returns:
+        dict: Overrides to apply to base data
+    """
+
+    if doctype == "Daily Work Updates":
+        return {
+            "log_date": datetime.date.today(),
+            "email": message.owner,
+            "type": message.type,
+            "log_table": [
+                {
+                    "uid": message.name,
+                    "task": command_context.get("chat"),
+                    "time_log": datetime.datetime.now().time()
+                }
+            ]
+        }
+
+    else:
+        return {}

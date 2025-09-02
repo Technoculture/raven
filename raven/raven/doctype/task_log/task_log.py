@@ -18,7 +18,7 @@ class TaskLog(Document):
 		parentfield: DF.Data
 		parenttype: DF.Data
 		task: DF.Data
-		time: DF.Time
+		time_log: DF.Time
 		uid: DF.Data
 	# end: auto-generated types
 

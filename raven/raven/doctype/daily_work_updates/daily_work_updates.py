@@ -18,6 +18,7 @@ class DailyWorkUpdates(Document):
 		email: DF.Data
 		log_date: DF.Date
 		log_table: DF.Table[TaskLog]
+		type: DF.Literal["Plan", "Update"]
 	# end: auto-generated types
 
 	pass

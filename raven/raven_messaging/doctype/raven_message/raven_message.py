@@ -2,15 +2,18 @@
 # For license information, please see license.txt
 import datetime
 import json
-
+from datetime import date
 import frappe
 from bs4 import BeautifulSoup
 from frappe import _
 from frappe.model.document import Document
 from frappe.utils import get_datetime, get_system_timezone
+
+from raven.utils import data_builder
 from pytz import timezone, utc
 
-from raven.ai.ai import handle_ai_thread_message, handle_bot_dm , handle_non_agentic_bots
+from raven.ai.ai import handle_ai_thread_message, handle_bot_dm
+from raven.utils import handle_non_agentic_bots , execute_bot_script
 from raven.api.raven_channel import get_peer_user
 from raven.notification import (
 	send_notification_for_message,
@@ -21,7 +24,8 @@ from raven.utils import (
 	get_raven_room,
 	is_channel_member,
 	refresh_thread_reply_count,
-	track_channel_visit
+	track_channel_visit,
+	get_overrides_for_command
 )
 
 
@@ -202,7 +206,7 @@ class RavenMessage(Document):
 
 		self.send_push_notification()
 
-
+	
 
 	def handle_message_to_bot(self):
 
@@ -219,8 +223,9 @@ class RavenMessage(Document):
 		# Check if this channel is an AI Thread channel
 
 		channel_doc = frappe.get_cached_doc("Raven Channel", self.channel_id)
-
+		# Thead logic
 		is_ai_thread = channel_doc.is_ai_thread
+		# print(is_ai_thread , "is AI Thread")
 
 		if is_ai_thread:
 			frappe.enqueue(
@@ -256,18 +261,47 @@ class RavenMessage(Document):
 			return
 
 		bot = frappe.get_cached_doc("Raven Bot", peer_user_doc.bot)
-
 		if not bot.is_ai_bot:
-			frappe.enqueue(
-				method=handle_non_agentic_bots,
-				message=self,
-				bot=bot,
-				timeout=600,
-				job_name="handle_non_agentic_bots",
-				at_front=True,
-			)
-		else:
+			command_tree = handle_non_agentic_bots(message=self , bot=bot)
+			bot = frappe.get_doc("Raven Bot" , bot.name)
+			for command in bot.command_table:
+				if command.command_name == f"/{command_tree['command']}":
+					if command.command_name == "work_plan":
+						self.type = "Plan"
+					else:
+						self.type = "Update"
 
+					overrides = get_overrides_for_command("Daily Work Updates", command_tree, self)
+
+					data = data_builder("Daily Work Updates" , overrides=overrides)
+					script = command.command_script
+
+					exec_response_value = execute_bot_script(script , 
+											      variables={"frappe": frappe, 
+							"date": datetime.date,
+							"datetime": datetime.datetime,
+							"data": data
+							
+							, "date": __import__('datetime').date},
+												  
+												  
+												  entrypoint="create_doc"
+
+											  )
+					print(exec_response_value , "execution value")
+
+			# print(doc.command_table)
+
+			# print( bot.as_dict())
+			# frappe.enqueue(
+			# 	method=handle_bot_dm,
+			# 	message=self,
+			# 	bot=bot,
+			# 	timeout=600,
+			# 	job_name="handle_bot_dm",
+			# 	at_front=True,
+			# )
+		else:
 			frappe.enqueue(
 				method=handle_bot_dm,
 				message=self,
