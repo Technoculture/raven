@@ -2,13 +2,17 @@
 # For license information, please see license.txt
 import datetime
 import json
-
+import re
+from datetime import date , time
+from datetime import datetime
 import frappe
 from bs4 import BeautifulSoup
 from frappe import _
 from frappe.model.document import Document
 from frappe.utils import get_datetime, get_system_timezone
 from pytz import timezone, utc
+from frappe.utils import now
+from raven.utils import create_doc , update_doc
 
 from raven.ai.ai import handle_ai_thread_message, handle_bot_dm
 from raven.api.raven_channel import get_peer_user
@@ -23,6 +27,161 @@ from raven.utils import (
 	refresh_thread_reply_count,
 	track_channel_visit,
 )
+
+
+def extract_message(text, command):
+    if text.startswith(command):
+        return text[len(command):].strip()
+    return text
+
+
+
+def get_username_by_email(email):
+   
+    user = frappe.get_value("Raven User", {"user": email}, "full_name")
+    return user
+def bifurcate(text):
+    if not text.startswith("/"):
+        return None, text  
+
+    parts = text.split(" ", 1)
+    command = parts[0]
+    message = parts[1].strip() if len(parts) > 1 else ""
+    return command, message
+
+
+def handle_bot_command(message, bot):
+    bot_command_raw = None
+    print(message.as_dict() , "messages are here")
+    bot_command = None
+    today = date.today()
+    hornet = message.json["content"][0]["content"]
+    response_output = False
+    update_message = None
+    s_reply = f"Update Submitted Successfully"
+    for item in hornet:
+       if item.get("type") == "text":
+         bot_command_raw = item.get("text").strip()
+		 
+         bot_command , update_message = bifurcate(bot_command_raw)
+		 
+	
+    reply = ''
+    existing = frappe.get_list(
+        "Work Updates",
+        filters={"email": message.owner, "log_date": today},
+        fields=["name"]
+    )
+
+
+    command_map = {
+        "/work_plan": "Update Your Todays Work Plan ",
+        "/work_update": "Hello Mention your Work Update.",
+		"/help" : "List of Available Commands <br/> 1. /work_plan  ie @HelloBot /work_update Working on Issue Number #34 <br/> 2. /work_update\n @HelloBot /work_update Completed Issue number #34 <br/>"
+    }
+    if bot_command is None:
+       reply = "Enter Commands type /work_update or /work_plan"
+    elif update_message is None or update_message == "":
+       reply = "Enter Update"
+    elif len(update_message)<10:
+       reply = "Length of Messge cannot be less than 10 Characters"
+    elif bot_command.strip() == "/work_plan":
+        create_doc({
+			"log_date":date.today(),
+			"email":message.owner,
+			"c_log_table":[{
+				"uid":message.name,
+				"task":update_message,
+				"time_log":datetime.now().time()
+
+			}],
+			"type":"Plan"
+		})
+        response_output = True
+        username = get_username_by_email(message.owner)
+        if len(existing)>=1:
+           reply = f"Work Plan Updated @{username}  "
+        else:
+           reply = f"Submitted Work Update Approved @{username}  "
+		   
+        # reply = f"Submitted Work Plan  Approved {message.owner}"
+		
+    elif bot_command.strip() == "/work_update":
+
+        create_doc({
+			"log_date":date.today(),
+			"email":message.owner,
+			"c_log_table":[{
+				"uid":message.name,
+				"task":update_message,
+				"time_log":datetime.now().time()
+
+			}],
+			"type":"Update"
+		})
+        response_output = True
+		
+        if len(existing)>=1:
+           username = get_username_by_email(message.owner)
+           reply = f"Work Updated List Updated by @{username} "
+        else:
+           username = get_username_by_email(message.owner)
+           reply = f"Submitted Work Update by @{username} "
+		   
+			
+    elif bot_command.strip() == "/help":
+        reply = f"{command_map[bot_command.strip()]}"
+    else:
+        reply = command_map.get(bot_command, f"{bot_command} Unknown command. Try /help")
+
+    if response_output:
+      send_bot_message(bot=bot.name, to_channel="Technoculture-updates", content=reply)
+      send_bot_message(bot=bot.name, to_channel=message.channel_id, content=s_reply)
+
+    else:
+       send_bot_message(bot=bot.name, to_channel=message.channel_id, content=reply)
+	  
+	
+
+
+
+
+def send_bot_message(bot, to_channel, content):
+    bot_user = frappe.get_cached_value("Raven Bot", bot, "bot_user")
+
+    frappe.get_doc({
+        "doctype": "Raven Message",
+        "channel_id": to_channel,
+        "text": content,
+        "content": content,
+        "message_type": "Text",
+        "is_bot_message": 1,
+        "bot": bot,
+        "owner": bot_user,
+    }).insert(ignore_permissions=True)
+
+
+    frappe.db.commit()
+	
+
+
+def get_updated_chat(json_data):
+	"""Safely extract the updated content from the message JSON."""
+	try:
+		if (
+			json_data
+			and isinstance(json_data, dict)
+			and isinstance(json_data.get("content"), list)
+			and len(json_data["content"]) > 0
+			and isinstance(json_data["content"][0], dict)
+			and isinstance(json_data["content"][0].get("content"), list)
+		):
+			return json_data["content"][0]["content"]
+	except Exception as e:
+		frappe.log_error(f"Error in get_updated_chat: {e}")
+	return []
+
+
 
 
 class RavenMessage(Document):
@@ -197,15 +356,19 @@ class RavenMessage(Document):
 			self.publish_unread_count_event(last_message_details)
 
 		if self.message_type == "Text":
-			self.handle_ai_message()
+			# self.handle_ai_message()
+			self.update_on_group()
+			# self.
 
 		self.send_push_notification()
 
 	def handle_ai_message(self):
 
 		# If the message was sent by a bot, do not call the function
+		
 		if self.is_bot_message:
 			return
+		
 
 		# If AI Integration is not enabled, do not call the function
 		raven_settings = frappe.get_cached_doc("Raven Settings")
@@ -230,12 +393,10 @@ class RavenMessage(Document):
 
 			return
 
-		# If not a part of a AI Thread, then check if this is a DM to a bot - if yes, then we should create a new thread
 
 		is_dm = channel_doc.is_direct_message
 
 		# Only DMs to bots need to be handled (for now)
-
 		if not is_dm:
 			return
 
@@ -252,9 +413,11 @@ class RavenMessage(Document):
 			return
 
 		bot = frappe.get_cached_doc("Raven Bot", peer_user_doc.bot)
-
 		if not bot.is_ai_bot:
 			return
+			
+
+			# handle_bot_command(message=self , bot=bot)
 
 		frappe.enqueue(
 			method=handle_bot_dm,
@@ -265,9 +428,56 @@ class RavenMessage(Document):
 			at_front=True,
 		)
 
+
+	def update_on_group(self):
+
+
+		if self.is_bot_message:
+			return
+
+
+		raven_settings = frappe.get_cached_doc("Raven Settings")
+		if not raven_settings.enable_ai_integration:
+			return
+
+
+		channel_doc = frappe.get_cached_doc("Raven Channel", "Technoculture-updates")
+		# print(self.as_dict() , "working way")
+		is_ai_thread = channel_doc.is_ai_thread
+
+		if is_ai_thread:
+			frappe.enqueue(
+				method=handle_ai_thread_message,
+				message=self,
+				timeout=600,
+				channel=channel_doc,
+				at_front=True,
+				job_name="handle_ai_thread_message",
+			)
+
+			return
+		mentioned_bot = self.content
+		channel_vlue = frappe.get_doc("Raven Channel" ,self.channel_id)
+
+		bot_name = channel_vlue.channel_name.split(" _ ")[1]
+		bot_pattern = re.search(r'@(\w+)' , mentioned_bot)
+		
+		if bot_name:
+			bot = frappe.get_cached_doc("Raven Bot", bot_name)
+			if not bot.is_ai_bot:
+				handle_bot_command(message=self , bot=bot)
+		
+
+		
+		
+
+		
+		
+
+
+
 	def set_last_message_timestamp(self):
 
-		# Update directly via SQL since we do not want to invalidate the document cache
 		message_details = json.dumps(
 			{
 				"message_id": self.name,
@@ -541,10 +751,75 @@ class RavenMessage(Document):
 			after_commit=True,
 		)
 
-	def on_update(self):
 
-		# TEMP: this is a temp fix for the Desk interface
+	def on_update(self):
+		# print(self.as_dict() ,"hello")
+		if self.is_edited == 1 or self.is_edited == "1":
+			bot_command_raw = None
+			bot_command = None
+			today = date.today()
+			response_output = False
+			update_message = None
+			s_reply = None
+			s_reply_channel = None
+
+			updated_chat = get_updated_chat(self.json)
+			# print(updated_chat , type(updated_chat) , "how are ")
+
+
+			for item in updated_chat:
+				# print("updated once")
+				# print(item , "Items under review")
+				if item.get("type") == "text":
+					bot_command_raw = item.get("text", "").strip()
+					bot_command, update_message = bifurcate(bot_command_raw)
+					# print(bot_command , "bot command")
+					if bot_command.strip() == "/work_plan":
+						s_reply = "Todays Work Plan has been Updated"
+						s_reply_channel = f"Todays Work Plan has been updated by {self.owner}"
+					else:
+						s_reply = "Todays Work Updated has been Updated"
+						s_reply_channel = f"Todays Work Update has been updated by {self.owner}"
+
+
+					channel_value = frappe.get_doc("Raven Channel", self.channel_id)
+					bot_name = channel_value.channel_name.split(" _ ")[1]
+					if bot_name:
+						bot = frappe.get_cached_doc("Raven Bot", bot_name)
+
+						if not bot.is_ai_bot:
+							# print(update_message ,"hello" )
+							update_doc({
+								"log_date": today,
+								"email": self.owner,
+								"c_log_table": [{
+									"uid": self.name,
+									"task": update_message,
+									"time_log": datetime.now().time()
+								}],
+								"type": "Plan"
+							})
+
+							send_bot_message(bot=bot.name, to_channel=self.channel_id, content=s_reply)
+							send_bot_message(bot=bot.name, to_channel="Technoculture-updates", content=s_reply_channel)
+
+
+
+
+
+	
+
+
+
+
+
+
+		
+
+
+
 		self.publish_deprecated_event_for_desk()
+		
 
 		if self.is_edited or self.is_thread or self.flags.editing_metadata:
 			frappe.publish_realtime(

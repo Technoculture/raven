@@ -13,6 +13,9 @@ from raven.ai.openai_client import (
 )
 
 
+
+
+
 def handle_bot_dm(message, bot):
 	"""
 	Function to handle direct messages to the bot.
@@ -26,6 +29,20 @@ def handle_bot_dm(message, bot):
 	else:
 		# Use old Assistants API for legacy bots
 		return handle_bot_dm_with_assistants(message, bot)
+
+
+def push_message_to_channel(channel_id, text, is_bot_message=False, bot_user=None):
+    message = frappe.get_doc({
+        "doctype": "Raven Message",
+        "channel_id": channel_id,
+        "text": text,
+        "message_type": "Text",
+        "is_bot_message": is_bot_message,
+        "bot": bot_user if is_bot_message else None,
+    })
+    message.insert(ignore_permissions=True)
+    message.save()
+
 
 
 def handle_bot_dm_with_agents(message, bot):

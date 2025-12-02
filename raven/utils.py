@@ -213,3 +213,145 @@ def clear_thread_reply_count_cache(thread_id: str):
 	Clear the thread reply count cache
 	"""
 	frappe.cache().hdel("raven:thread_reply_count", thread_id)
+
+
+
+def push_message_to_channel(channel_id, text, is_bot_message=False, bot_user=None):
+    doc = frappe.get_doc({
+        "doctype": "Raven Message",
+        "channel_id": channel_id,
+        "text": text,
+        "message_type": "Text",
+        "is_bot_message": is_bot_message,
+        "bot": bot_user if is_bot_message else None,
+    })
+
+
+    doc.insert(ignore_permissions=True)
+
+from datetime import date
+import frappe
+
+def create_doc(data, ignore_permissions=False):
+    today = date.today()
+
+    # Check if a Work Updates doc already exists for today
+    existing = frappe.get_list(
+        "Work Updates",
+        filters={"employee": data.get("employee"), "date": today},
+        fields=["name"]
+    )
+
+    if existing:
+        # Fetch the existing doc
+        doc = frappe.get_doc("Work Updates", existing[0].name)
+
+        # Option 1: Append new tasks to child table
+        for task in data.get("work_update_tasks", []):
+            doc.append("work_update_tasks", task)
+
+        # Optionally update any other fields from data
+        if "title" in data:
+            doc.title = data["title"]
+
+        doc.save(ignore_permissions=ignore_permissions)
+        return doc
+
+    # If not existing, create new
+    doc = frappe.get_doc({
+        "doctype": "Work Updates",
+        **data
+    })
+
+    doc.insert(ignore_permissions=ignore_permissions)
+    return doc
+
+def create_doc(data, ignore_permissions=False):
+    today = date.today()
+
+    existing = frappe.get_list(
+        "Work Updates",
+        filters={"email": data["email"], "log_date": today , "type":data["type"]},
+        fields=["name"]
+    )
+
+    if existing:
+        doc = frappe.get_doc("Work Updates", existing[0].name)
+
+        for task in data.get("c_log_table", []):
+            doc.append("c_log_table", task)
+
+        doc.save(ignore_permissions=ignore_permissions)
+        return doc
+
+    # If not existing, create new
+    doc = frappe.get_doc({
+        "doctype": "Work Updates",
+        **data
+    })
+
+    doc.insert(ignore_permissions=ignore_permissions)
+    return doc
+
+
+def update_doc(data, ignore_permissions=False):
+    """
+    Upserts a Work Updates document:
+    - If it exists, update child table rows based on uid
+    - If not, create a new Work Updates document
+    - Appends child rows if uid not found
+    """
+
+    required_fields = ["uid", "task"]  # Add more required fields if needed
+    today = date.today()
+
+    # Validate input structure
+    for row in data.get("c_log_table", []):
+        for field in required_fields:
+            if not row.get(field):
+                frappe.throw(f"Missing required field '{field}' in child table row: {row}")
+
+    # Check for existing Work Updates doc
+    existing = frappe.get_list(
+        "Work Updates",
+        filters={
+            "email": data["email"],
+            "log_date": today,
+            "type": data["type"]
+        },
+        fields=["name"]
+    )
+
+    if existing:
+        doc = frappe.get_doc("Work Updates", existing[0].name)
+    else:
+        # Create new Work Updates document
+        doc = frappe.get_doc({
+            "doctype": "Work Updates",
+            "email": data["email"],
+            "log_date": today,
+            "type": data["type"],
+            "c_log_table": []
+        })
+
+    # Map incoming data by UID
+    uid_map = {row["uid"]: row for row in data.get("c_log_table", [])}
+    updated_uids = []
+
+    # Update existing child rows
+    for row in doc.c_log_table:
+        if row.uid in uid_map:
+            updates = uid_map[row.uid]
+            for key, value in updates.items():
+                if key != "uid":
+                    setattr(row, key, value)
+            updated_uids.append(row.uid)
+
+    # Append new child rows that weren't updated
+    for uid, row_data in uid_map.items():
+        if uid not in updated_uids:
+            doc.append("c_log_table", row_data)
+
+    # Save the document
+    doc.save(ignore_permissions=ignore_permissions)
+    return doc
