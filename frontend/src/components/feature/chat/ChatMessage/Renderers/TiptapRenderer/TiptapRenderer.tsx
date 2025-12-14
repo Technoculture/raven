@@ -14,7 +14,7 @@ import CodeBlockLowlight from '@tiptap/extension-code-block-lowlight'
 import { common, createLowlight } from 'lowlight'
 import python from 'highlight.js/lib/languages/python'
 import { CustomBold } from './Bold'
-import { ChannelMentionRenderer, UserMentionRenderer } from './Mention'
+import { ChannelMentionRenderer, UserMentionRenderer, CommandMentionRenderer } from './Mention'
 import { CustomLink } from './Link'
 import { CustomUnderline } from './Underline'
 import { Image } from '@tiptap/extension-image'
@@ -145,6 +145,20 @@ export const TiptapRenderer = ({ message, user, isScrolling = false, showMiniIma
         suggestion: {
           char: '@',
           pluginKey: new PluginKey('userMention'),
+        },
+      }),
+       Mention.extend({
+        name: 'commandMention',
+        HTMLAttributes: {
+          class: 'mention',
+        },
+        addNodeView() {
+          return ReactNodeViewRenderer(CommandMentionRenderer)
+        }
+      }).configure({
+        suggestion: {
+          char: '/',
+          pluginKey: new PluginKey('commandMention'),
         },
       }),
       Mention.extend({

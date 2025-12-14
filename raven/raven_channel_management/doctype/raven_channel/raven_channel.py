@@ -16,9 +16,10 @@ class RavenChannel(Document):
 
 	if TYPE_CHECKING:
 		from frappe.types import DF
-
+		from raven.raven.doctype.channel_installed.channel_installed import ChannelInstalled
 		from raven.raven.doctype.raven_pinned_messages.raven_pinned_messages import RavenPinnedMessages
 
+		bots_table: DF.Table[ChannelInstalled]
 		channel_description: DF.SmallText | None
 		channel_name: DF.Data
 		is_ai_thread: DF.Check

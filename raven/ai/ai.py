@@ -13,13 +13,15 @@ from raven.ai.openai_client import (
 )
 
 
+
+
+# Handling AI 
 def handle_bot_dm(message, bot):
 	"""
 	Function to handle direct messages to the bot.
 
 	Routes to Agents SDK for bots with model_provider, falls back to Assistants API for legacy bots.
 	"""
-
 	# Check if bot uses new Agents SDK
 	if bot.model_provider in ["OpenAI", "Local LLM"] and not bot.openai_assistant_id:
 		return handle_bot_dm_with_agents(message, bot)

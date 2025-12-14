@@ -2,8 +2,34 @@ import frappe
 from frappe import _
 
 from raven.api.raven_users import get_list
+from raven.api.raven_channel_commands import get_commands
 from raven.utils import get_channel_members as get_channel_members_util
 from raven.utils import get_workspace_members
+
+
+
+@frappe.whitelist(methods=["GET"])
+def get_channel_commands(channel_id):
+	print(channel_id , "channel ID")
+	if not channel_id:
+		frappe.throw(_("Missing channel_id"), title="Invalid Request")
+	try:
+		channel = frappe.get_doc("Raven Channel" , channel_id)
+
+		if not frappe.has_permission("Raven Channel", doc=channel , ptype="read"):
+			raise PermissionError(_("You dont the required authorization to access this channel"))
+
+
+		commands = get_commands(channel_id=channel_id)
+		
+		
+		return commands or {}
+	
+	except Exception as e:
+		# For debugging only
+		# frappe.log_error(frappe.get_trackback(), "Error")
+		frappe.throw(_("Something went wrong with fetching Command") , title="Server Error")
+
 
 
 @frappe.whitelist(methods=["GET"])

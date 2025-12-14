@@ -100,3 +100,19 @@ export const ChannelMentionRenderer = ({ node }: NodeViewRendererProps) => {
         </NodeViewWrapper>
     );
 };
+
+
+export const CommandMentionRenderer = ({ node }: NodeViewRendererProps) => {
+    return (
+        <NodeViewWrapper as="span">
+            <Text
+                size="2"
+                weight="bold"
+                color="iris" 
+                className="bg-accent-a2 px-1 rounded"
+            >
+                {node.attrs.label ?? node.attrs.id}
+            </Text>
+        </NodeViewWrapper>
+    )
+}

@@ -64,6 +64,10 @@ const ChatInput = ({ channelID, onSendMessage }: ChatInputProps) => {
             if (mention.trigger === '#') {
                 return `<span data-type="channelMention" class="mention" data-id="${mention.id}" data-label="${mention.name}">#${mention.name}</span>`
             }
+            
+            if (mention.trigger === '/') {
+                return `<span data-type="commandMention" class="mention" data-id="${mention.id}" data-label="${mention.name}">/${mention.name}</span>`
+            }
 
             return mention.original
         })

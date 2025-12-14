@@ -158,9 +158,22 @@ doc_events = {
 
 scheduler_events = {
 	"cron": {
-		# run every 5 minutes
-		"*/5 * * * *": ["raven.scheduler.close_expired_polls.close_expired_polls"]
-	}
+		"*/5 * * * *": ["raven.scheduler.close_expired_polls.close_expired_polls"],
+        "0 10 * * *": [
+            "raven.scheduler.update_scheduler.check_morning_plan"
+        ],
+         "0 11 * * *": [
+            "raven.scheduler.update_scheduler.check_morning_plan"
+        ],
+
+        "0 18 * * *": [
+            "raven.scheduler.update_scheduler.check_evening_update"
+        ],
+        "0 19 * * *": [
+            "raven.scheduler.update_scheduler.check_evening_update"
+        ],
+	},
+   
 }
 
 # Testing
