@@ -266,14 +266,14 @@ class RavenMessage(Document):
 
 			for command in r_bot.command_table:
 				if command.command_name == f"/{command_tree['command']}":
-					if command.command_name == "work_plan":
+					if command.command_name == "/work_plan":
 						self.type = "Plan"
 					else:
 						self.type = "Update"
 
-					overrides = get_overrides_for_command(command.target_doctype, command_tree, self)
+					overrides = get_overrides_for_command("Daily Work Updates", command_tree, self)
 
-					data = data_builder(command.target_doctype , overrides=overrides)
+					data = data_builder("Daily Work Updates" , overrides=overrides)
 					script = command.command_script
 
 					exec_response_value = execute_bot_script(script , 
@@ -290,6 +290,67 @@ class RavenMessage(Document):
 					)
 					response = None
 					message_status = exec_response_value["success"]
+					print(message_status , "message status")
+	# 			def create_doc(data):
+    # """
+    # Create or update a Daily Work Updates document.
+    
+    # Args:
+    #     data: Dictionary containing the document data with fields:
+    #         - email: User email
+    #         - log_date: Date of the log
+    #         - type: "Plan" or "Update"
+    #         - log_table: List of task log entries
+    
+    # Returns:
+    #     str: Name of the created/updated document
+    # """
+    # try:
+    #     # Check if a document already exists for this email and date
+    #     existing_docs = frappe.get_all(
+    #         "Daily Work Updates",
+    #         filters={
+    #             "email": data.get("email"),
+    #             "log_date": data.get("log_date"),
+    #             "type": data.get("type")
+    #         },
+    #         limit=1
+    #     )
+        
+    #     if existing_docs:
+    #         # Update existing document
+    #         doc = frappe.get_doc("Daily Work Updates", existing_docs[0].name)
+            
+    #         # Append new log entries to existing ones
+    #         if data.get("log_table"):
+    #             for log_entry in data.get("log_table"):
+    #                 doc.append("log_table", log_entry)
+            
+    #         doc.save()
+    #         frappe.db.commit()
+            
+    #         print(f"Updated Daily Work Updates: {doc.name}")
+    #         return doc.name
+            
+    #     else:
+    #         # Create new document
+    #         doc = frappe.get_doc({
+    #             "doctype": "Daily Work Updates",
+    #             "email": data.get("email"),
+    #             "log_date": data.get("log_date"),
+    #             "type": data.get("type"),
+    #             "log_table": data.get("log_table", [])
+    #         })
+            
+    #         doc.insert()
+    #         frappe.db.commit()
+            
+    #         print(f"Created Daily Work Updates: {doc.name}")
+    #         return doc.name
+            
+    # except Exception as e:
+    #     print(f"Error creating/updating Daily Work Updates: {str(e)}")
+    #     raise e
 					if message_status:
 						user = f"@{get_username_by_email(self.owner)}"
 						response = command.success_message.format(user=user , user_email=self.owner)

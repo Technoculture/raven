@@ -4,6 +4,7 @@ import datetime
 import io
 import contextlib
 
+
 def get_raven_room():
 	"""
 	Room which any user with the role "Raven User" is subscribed to.
@@ -315,30 +316,26 @@ def bifurcate_command(message_dict):
 
 
 
+
 def execute_bot_script(script, variables=None, allowed_builtins=None, entrypoint=None):
     """
-    Execute a script with injected variables and capture output and result.
-
-    Args:
-        script (str): Python script code (function or inline block).
-        variables (dict): Variables to inject into the script context.
-        allowed_builtins (dict): Allowed built-ins (default: {'print': print}).
-        entrypoint (str): Optional function name to invoke after script executes.
-
-    Returns:
-        dict: {
-            "success": bool,
-            "output": str,
-            "error": str or None,
-            "result": Any or None
-        }
+    Execute a script with injected variables and capture output, result,
+    and log the execution status.
     """
+
     output_buffer = io.StringIO()
     error = None
     result = None
 
+    logger = frappe.logger("bot_script")
+
     if allowed_builtins is None:
-        allowed_builtins = {"print": print, "len": len, "range": range ,     "__import__": __import__ }
+        allowed_builtins = {
+            "print": print,
+            "len": len,
+            "range": range,
+            "__import__": __import__,
+        }
 
     safe_globals = {
         "__builtins__": allowed_builtins
@@ -359,17 +356,32 @@ def execute_bot_script(script, variables=None, allowed_builtins=None, entrypoint
 
         success = True
 
+        logger.info({
+            "event": "bot_script_executed",
+            "status": "success",
+            "entrypoint": entrypoint,
+            "output": output_buffer.getvalue().strip(),
+            "result": result,
+        })
+
     except Exception as e:
         success = False
         error = str(e)
+
+        logger.error({
+            "event": "bot_script_error",
+            "status": "failed",
+            "entrypoint": entrypoint,
+            "error": error,
+            "output": output_buffer.getvalue().strip(),
+        })
 
     return {
         "success": success,
         "output": output_buffer.getvalue().strip(),
         "error": error,
-        "result": result
+        "result": result,
     }
-
 
 
 def get_map(doctype_name):
@@ -432,7 +444,8 @@ def message_dispatch(channel_name, bot , response):
         channel_name (str): Channel where the messge has to be dispatched
     """
     bot_user = frappe.get_cached_value("Raven Bot", bot , "bot_user")
-    frappe.get_doc({
+    print(bot_user , bot , "hello" , channel_name , "channel_name")
+    value = frappe.get_doc({
           "doctype":"Raven Message",
           "channel_id":channel_name,
           "text":response,
@@ -445,7 +458,8 @@ def message_dispatch(channel_name, bot , response):
 
     }).insert(ignore_permissions=True)
 
-    frappe.db.commit()
+    commited =  frappe.db.commit()
+    print("Hello" , value , commited)
 
 
 def data_builder(doctype_name, overrides=None):
@@ -508,5 +522,7 @@ def get_overrides_for_command(doctype, command_context, message):
 
 
 def get_username_by_email(email):
+    print(email, "email dispatched")
     user = frappe.get_value("Raven User", {"user": email}, "full_name")
+    print(user , "user is ddefined")
     return user

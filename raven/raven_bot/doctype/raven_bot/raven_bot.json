@@ -48,9 +48,7 @@
   "command_panel_section",
   "command_table",
   "additional_dependent_channels_section",
-  "dependent_channels",
-  "client_channels_section",
-  "channel_names"
+  "dependent_channels"
  ],
  "fields": [
   {
@@ -277,18 +275,6 @@
    "options": "Bot Commands Table"
   },
   {
-   "fieldname": "client_channels_section",
-   "fieldtype": "Section Break",
-   "label": "Client Channels"
-  },
-  {
-   "fieldname": "channel_names",
-   "fieldtype": "Table",
-   "label": "Channel Names",
-   "options": "Bots Installed",
-   "reqd": 1
-  },
-  {
    "fieldname": "column_break_sfhm",
    "fieldtype": "Column Break"
   },
@@ -307,7 +293,7 @@
   {
    "fieldname": "additional_dependent_channels_section",
    "fieldtype": "Section Break",
-   "label": "Additional Dependent Channels"
+   "label": "Channel Availability "
   },
   {
    "fieldname": "dependent_channels",
@@ -319,8 +305,8 @@
  "image_field": "image",
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2025-09-03 14:19:09.282393",
- "modified_by": "Administrator",
+ "modified": "2025-12-13 10:44:10.068434",
+ "modified_by": "debugger@panomic.cloud",
  "module": "Raven Bot",
  "name": "Raven Bot",
  "naming_rule": "By fieldname",

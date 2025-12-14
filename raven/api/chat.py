@@ -10,6 +10,7 @@ from raven.utils import get_workspace_members
 
 @frappe.whitelist(methods=["GET"])
 def get_channel_commands(channel_id):
+	print(channel_id , "channel ID")
 	if not channel_id:
 		frappe.throw(_("Missing channel_id"), title="Invalid Request")
 	try:
