@@ -172,6 +172,10 @@ scheduler_events = {
         "0 19 * * *": [
             "raven.scheduler.update_scheduler.check_evening_update"
         ],
+        
+		 "0 23 * * *": [
+            "raven.scheduler.update_scheduler.dispatch_managers"
+        ],
 	},
    
 }
