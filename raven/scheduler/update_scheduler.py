@@ -1,5 +1,5 @@
 import frappe
-from frappe.utils import nowdate
+from frappe.utils import nowdate , today
 from raven.utils import message_dispatch
 
 
@@ -10,25 +10,25 @@ def create_direct_message_channel(user_id , text):
 			"is_direct_message": 1,
 			"channel_name": [
 				"in",
-				["Daily Update Bot" + " _ " + user_id, user_id + " _ " + "Daily Update Bot"],
+				["Daily Work Update" + " _ " + user_id, user_id + " _ " + "Daily Work Update"],
 			],
 		},
 		fieldname="name",
 	)
      if channel_name:
-          message_dispatch(channel_name=channel_name , bot="Daily Update Bot" , response=text)
+          message_dispatch(channel_name=channel_name , bot="Daily Work Update" , response=text)
      else:
           channel = frappe.get_doc(
 			{
 				"doctype": "Raven Channel",
-		 		"channel_name": "Daily Update Bot" + " _ " + user_id,
+		 		"channel_name": "Daily Work Update" + " _ " + user_id,
 		 		"is_direct_message": 1,
-		 		"is_self_message": "Daily Update Bot" == user_id,
+		 		"is_self_message": "Daily Work Update" == user_id,
 		 	}
 		 )
           channel.flags.is_created_by_bot = True
           channel.insert()
-          message_dispatch(channel_name=channel.name , bot="Daily Update Bot" , response=text)
+          message_dispatch(channel_name=channel.name , bot="Daily Work Update" , response=text)
 
           
 
@@ -38,6 +38,47 @@ def dispatch_managers():
     for val in values:
         reporting_manager = get_reporting_manager_email(val)
         message_dispatch(reporting_manager ,f"The user {val} has not updated the daily status")
+
+
+
+def get_employees_on_leave_today():
+    today_date = today()
+    
+    leave_applications = frappe.db.get_all(
+        "Leave Application",
+        filters={
+            "from_date": ["<=", today_date],
+            "to_date": [">=", today_date],
+            "half_day":"0"
+        },
+        fields=["employee"]
+    )
+    
+    if not leave_applications:
+        return []
+    
+    employee_ids = [leave_app.employee for leave_app in leave_applications]
+    
+    employees = frappe.db.get_all(
+        "Employee",
+        filters={
+            "name": ["in", employee_ids],
+            "status": "Active"  
+        },
+        fields=["company_email", "personal_email", "user_id"]
+    )
+    
+    emails = []
+    for emp in employees:
+        if emp.company_email:
+            emails.append(emp.company_email)
+        elif emp.user_id:
+            emails.append(emp.user_id)
+        elif emp.personal_email:
+            emails.append(emp.personal_email)
+    
+    return emails
+
 
 
 def get_reporting_manager_email(email):
@@ -119,7 +160,8 @@ def check_morning_plan():
     )
 
     missing_plan_users = []
-
+    values = get_employees_on_leave_today()
+    
     for ru in raven_users:
         email = ru.user
 
@@ -137,13 +179,16 @@ def check_morning_plan():
             missing_plan_users.append(email)
 
     for user in missing_plan_users:
-         create_direct_message_channel(user_id=user , text="Update your Morning Work Plan")
+         if user not in values:
+            create_direct_message_channel(user_id=user , text="Update your Morning Work Plan")
+    
+    return values
     
 
 
 def check_evening_update():
     today = nowdate()
-
+    values = get_employees_on_leave_today()
     raven_users = frappe.get_all(
         "Raven User",
         filters={"enabled": 1, "type": "User"},
@@ -169,7 +214,8 @@ def check_evening_update():
 
 
     for user in missing_plan_users:
-         create_direct_message_channel(user_id=user , text="Update your Evening Work Update")
+        if user not in values:
+            create_direct_message_channel(user_id=user , text="Update your Evening Work Update")
 
     return missing_plan_users
 
