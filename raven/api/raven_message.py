@@ -7,7 +7,7 @@ from frappe.query_builder import JoinType, Order
 from frappe.query_builder.functions import Coalesce, Count
 
 from raven.api.raven_channel import create_direct_message_channel, get_peer_user_id
-from raven.utils import get_channel_member, is_channel_member, track_channel_visit
+from raven.utils import get_channel_member, is_channel_member, track_channel_visit , get_username_by_email
 
 
 @frappe.whitelist(methods=["POST"])

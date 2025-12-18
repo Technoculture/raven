@@ -1,0 +1,112 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "creation": "2025-08-30 16:24:27.160348",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "command_name",
+  "column_break_rqpo",
+  "command_description",
+  "section_break_pimv",
+  "approved",
+  "disable",
+  "column_break_orik",
+  "approved_by",
+  "section_break_arcf",
+  "success_message",
+  "column_break_ilce",
+  "failure_message",
+  "section_break_icuu",
+  "command_script"
+ ],
+ "fields": [
+  {
+   "fieldname": "command_name",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Command Name",
+   "reqd": 1
+  },
+  {
+   "fieldname": "column_break_rqpo",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "command_description",
+   "fieldtype": "Data",
+   "label": "Command Description"
+  },
+  {
+   "fieldname": "section_break_icuu",
+   "fieldtype": "Section Break"
+  },
+  {
+   "fieldname": "command_script",
+   "fieldtype": "Code",
+   "label": "Command Script",
+   "reqd": 1
+  },
+  {
+   "fieldname": "section_break_pimv",
+   "fieldtype": "Section Break",
+   "label": "Bot Command Credentials"
+  },
+  {
+   "default": "0",
+   "fieldname": "approved",
+   "fieldtype": "Check",
+   "label": "Approved"
+  },
+  {
+   "fieldname": "column_break_orik",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "approved_by",
+   "fieldtype": "Link",
+   "label": "Approved By",
+   "options": "Employee"
+  },
+  {
+   "default": "0",
+   "fieldname": "disable",
+   "fieldtype": "Check",
+   "label": "Disable"
+  },
+  {
+   "fieldname": "section_break_arcf",
+   "fieldtype": "Section Break",
+   "label": "Response Messages"
+  },
+  {
+   "fieldname": "success_message",
+   "fieldtype": "Text",
+   "label": "Success Message"
+  },
+  {
+   "fieldname": "column_break_ilce",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "failure_message",
+   "fieldtype": "Text",
+   "label": "Failure Message"
+  }
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 1,
+ "istable": 1,
+ "links": [],
+ "modified": "2025-09-03 16:59:41.875857",
+ "modified_by": "Administrator",
+ "module": "Raven",
+ "name": "Bot Commands Table",
+ "owner": "Administrator",
+ "permissions": [],
+ "row_format": "Dynamic",
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": []
+}

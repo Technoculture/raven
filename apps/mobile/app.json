@@ -1,7 +1,7 @@
 {
   "expo": {
     "name": "Raven",
-    "slug": "Raven",
+    "slug": "ravenapp",
     "scheme": "raven.thecommit.company",
     "version": "1.1.3",
     "orientation": "portrait",
@@ -82,9 +82,9 @@
         "origin": false
       },
       "eas": {
-        "projectId": "3a173ddd-f22a-4f81-8279-40dcee6c29d5"
+        "projectId": "e26d15be-5f73-4476-a7e9-fde44e909801"
       }
     },
-    "owner": "the-commit-company"
+    "owner": "aman_ahmed"
   }
 }

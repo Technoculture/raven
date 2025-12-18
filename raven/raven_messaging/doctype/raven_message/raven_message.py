@@ -2,15 +2,17 @@
 # For license information, please see license.txt
 import datetime
 import json
-
+from datetime import date
 import frappe
 from bs4 import BeautifulSoup
 from frappe import _
 from frappe.model.document import Document
 from frappe.utils import get_datetime, get_system_timezone
+from raven.utils import data_builder , dependent_channel_serializer
 from pytz import timezone, utc
 
 from raven.ai.ai import handle_ai_thread_message, handle_bot_dm
+from raven.utils import handle_non_agentic_bots , execute_bot_script
 from raven.api.raven_channel import get_peer_user
 from raven.notification import (
 	send_notification_for_message,
@@ -23,6 +25,8 @@ from raven.utils import (
 	is_channel_member,
 	refresh_thread_reply_count,
 	track_channel_visit,
+	get_overrides_for_command,
+	get_username_by_email
 )
 
 
@@ -209,25 +213,27 @@ class RavenMessage(Document):
 			self.publish_unread_count_event(last_message_details)
 
 		if self.message_type == "Text":
-			self.handle_ai_message()
+			self.handle_message_to_bot()
 
 		self.send_push_notification()
 
-	def handle_ai_message(self):
+	
 
+	def handle_message_to_bot(self):
 		# If the message was sent by a bot, do not call the function
 		if self.is_bot_message:
 			return
 
 		# If AI Integration is not enabled, do not call the function
 		raven_settings = frappe.get_cached_doc("Raven Settings")
+
 		if not raven_settings.enable_ai_integration:
 			return
 
 		# Check if this channel is an AI Thread channel
 
 		channel_doc = frappe.get_cached_doc("Raven Channel", self.channel_id)
-
+		# Thead logic
 		is_ai_thread = channel_doc.is_ai_thread
 
 		if is_ai_thread:
@@ -264,18 +270,64 @@ class RavenMessage(Document):
 			return
 
 		bot = frappe.get_cached_doc("Raven Bot", peer_user_doc.bot)
-
 		if not bot.is_ai_bot:
-			return
+			command_tree = handle_non_agentic_bots(message=self , bot=bot)
+			r_bot = frappe.get_doc("Raven Bot" , bot.name)
+			dependent_channels = [channel.channel_name for channel in bot.get("dependent_channels", [])]
+			dependent_channels.append(self.channel_id)
 
-		frappe.enqueue(
-			method=handle_bot_dm,
-			message=self,
-			bot=bot,
-			timeout=600,
-			job_name="handle_bot_dm",
-			at_front=True,
-		)
+			for command in r_bot.command_table:
+				if command.command_name == f"/{command_tree['command']}":
+					if command.command_name == "/work_plan":
+						self.type = "Plan"
+					else:
+						self.type = "Update"
+
+					if (len(command_tree["chat"])<10):
+						dependent_channel_serializer(channel_list=dependent_channels,bot=bot.name, status=False , response="Your Work Plan/Update should be greater than 10 Character")
+						return
+
+					overrides = get_overrides_for_command("Daily Work Updates", command_tree, self)
+
+					data = data_builder("Daily Work Updates" , overrides=overrides)
+					script = command.command_script
+
+					exec_response_value = execute_bot_script(script , 
+											      variables={"frappe": frappe, 
+							"date": datetime.date,
+							"datetime": datetime.datetime,
+							"data": data
+							
+							, "date": __import__('datetime').date},
+												  
+												  
+							entrypoint="create_doc"
+
+					)
+					response = None
+					message_status = exec_response_value["success"]
+	
+					if message_status:
+						user = f"@{get_username_by_email(self.owner)}"
+						response = command.success_message.format(user=user , user_email=self.owner)
+
+						
+					else:
+						response = "Error Occurred" 
+
+					
+					dependent_channel_serializer(channel_list=dependent_channels,bot=bot.name, status=message_status , response=response)
+
+		
+		else:
+			frappe.enqueue(
+				method=handle_bot_dm,
+				message=self,
+				bot=bot,
+				timeout=600,
+				job_name="handle_bot_dm",
+				at_front=True,
+			)
 
 	def set_last_message_timestamp(self):
 
@@ -672,7 +724,7 @@ class RavenMessage(Document):
 			# If this is a new messagge (only applicable for files in on_update), then handle the AI message
 			if self.message_type == "File" or self.message_type == "Image":
 				if self.file:
-					self.handle_ai_message()
+					self.handle_message_to_bot()
 
 	def on_trash(self):
 		# delete all the reactions for the message

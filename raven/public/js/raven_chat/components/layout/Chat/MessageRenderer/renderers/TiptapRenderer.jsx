@@ -13,6 +13,11 @@ export const CustomChannelMention = Mention.extend({
     name: 'channelMention',
 })
 
+export const CustomCommandMention  = Mention.extend({
+     name: 'commandMention',
+})
+
+
 const TiptapRenderer = ({ message, isTruncated = false, showLinkPreview = true }) => {
 
     const editor = useEditor({

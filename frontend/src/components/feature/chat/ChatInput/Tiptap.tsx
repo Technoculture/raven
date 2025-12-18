@@ -34,10 +34,12 @@ import { useIsDesktop, useIsMobile } from '@/hooks/useMediaQuery'
 import { BiPlus } from 'react-icons/bi'
 import clsx from 'clsx'
 import { ChannelMembers } from '@/hooks/fetchers/useFetchChannelMembers'
+import { ChannelCommands } from '@/hooks/fetchers/useFetchChannelCommands'
 import TimestampRenderer from '../ChatMessage/Renderers/TiptapRenderer/TimestampRenderer'
 import { useParams } from 'react-router-dom'
 import { useAtom } from 'jotai'
 import { EnterKeyBehaviourAtom } from '@/utils/preferences'
+import CommandMentionList from './CommandMentionList'
 const MobileInputActions = lazy(() => import('./MobileActions/MobileInputActions'))
 
 const lowlight = createLowlight(common)
@@ -66,6 +68,7 @@ type TiptapEditorProps = {
     defaultText?: string,
     replyMessage?: Message | null,
     channelMembers?: ChannelMembers,
+    channelCommands?: ChannelCommands,
     channelID?: string,
     onUserType?: () => void,
     onUpArrow?: () => void,
@@ -88,6 +91,27 @@ export const UserMention = Mention.extend({
         }
     })
 
+
+export const CommandMention = Mention.extend({
+    name: 'commandMention',
+})
+    .configure({
+        suggestion: {
+            char: '/',
+            pluginKey: new PluginKey('commandMention'),
+            // Allow any character to be a prefix for a user mention
+            allowedPrefixes: null,
+            allow: (props) => {
+                const char = props.state.doc.textBetween(props.range.from - 1, props.range.from, '') || '';
+                return char === '' || /\s|[.,!?]/.test(char);
+            }
+
+
+        }
+    })
+
+
+
 export const ChannelMention = Mention.extend({
     name: 'channelMention',
 })
@@ -109,11 +133,19 @@ export interface MemberSuggestions extends UserFields {
     is_member: boolean
 }
 
-const Tiptap = forwardRef(({ isEdit, slotBefore, fileProps, onMessageSend, onUpArrow, channelMembers, onUserType, channelID, replyMessage, clearReplyMessage, placeholder = 'Type a message...', messageSending, sessionStorageKey = 'tiptap-editor', disableSessionStorage = false, defaultText = '' }: TiptapEditorProps, ref) => {
+const Tiptap = forwardRef(({ isEdit, slotBefore, fileProps, onMessageSend, onUpArrow, channelMembers, onUserType, channelCommands, channelID, replyMessage, clearReplyMessage, placeholder = 'Type a message...  hello', messageSending, sessionStorageKey = 'tiptap-editor', disableSessionStorage = false, defaultText = '' }: TiptapEditorProps, ref) => {
 
     const { enabledUsers } = useContext(UserListContext)
 
     const channelMembersRef = useRef<MemberSuggestions[]>([])
+    const channelCommandsRef = useRef<ChannelCommands>({});
+
+    // 2. Sync latest value when channelCommands updates
+    useEffect(() => {
+        channelCommandsRef.current = channelCommands || {};
+    }, [channelCommands]);
+
+   
 
     useEffect(() => {
         if (channelMembers) {
@@ -441,6 +473,87 @@ const Tiptap = forwardRef(({ isEdit, slotBefore, fileProps, onMessageSend, onUpA
 
             }
         }),
+
+        CommandMention.configure({
+            HTMLAttributes: {
+                class: 'mention',
+            },
+
+            renderHTML({ options, node }) {
+                return `${options.suggestion.char}${node.attrs.label ?? node.attrs.id}`;
+            },
+
+            suggestion: {
+                char: '/',
+                pluginKey: new PluginKey('commandMention'),
+
+                items: ({ query }) => {
+                    const allCommands = Object.values(channelCommandsRef.current || {}).flat();
+
+                    return allCommands
+                        .filter(cmd =>
+                            cmd.command_name.toLowerCase().startsWith('/' + query.toLowerCase())
+                        )
+                        .slice(0, 10)
+                        .map(cmd => ({
+                            id: cmd.command_name.slice(1),
+                            label: cmd.command_name.slice(1),
+                            description: cmd.command_description,
+                        }));
+                },
+
+                render: () => {
+                    let component: any;
+                    let popup: any;
+
+                    return {
+                        onStart: (props) => {
+                            component = new ReactRenderer(CommandMentionList, {
+                                props,
+                                editor: props.editor,
+                            });
+
+                            if (!props.clientRect) return;
+
+                            popup = tippy('body' as any, {
+                                getReferenceClientRect: props.clientRect as any,
+                                appendTo: () => document.body,
+                                content: component.element,
+                                showOnCreate: true,
+                                interactive: true,
+                                trigger: 'manual',
+                                placement: 'bottom-start',
+                            });
+                        },
+
+                        onUpdate(props) {
+                            component.updateProps(props);
+
+                            if (!props.clientRect) return;
+
+                            popup[0].setProps({
+                                getReferenceClientRect: props.clientRect,
+                            });
+                        },
+
+                        onKeyDown(props) {
+                            if (props.event.key === 'Escape') {
+                                popup[0].hide();
+                                return true;
+                            }
+
+                            return component.ref?.onKeyDown(props);
+                        },
+
+                        onExit() {
+                            popup[0].destroy();
+                            component.destroy();
+                        },
+                    };
+                },
+            },
+        }),
+
         ChannelMention.configure({
             HTMLAttributes: {
                 class: 'mention',

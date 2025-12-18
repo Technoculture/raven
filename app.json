@@ -1,0 +1,12 @@
+{
+  "expo": {
+    "extra": {
+      "eas": {
+        "projectId": "06f76d98-fd44-4d5a-a495-092e83ea5457"
+      }
+    },
+    "android": {
+      "package": "com.aman_ahmed.raven"
+    }
+  }
+}

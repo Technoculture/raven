@@ -33,7 +33,10 @@
   "ai_tab",
   "is_ai_thread",
   "openai_thread_id",
-  "thread_bot"
+  "thread_bot",
+  "extension_tab",
+  "bots_list_section",
+  "bots_table"
  ],
  "fields": [
   {
@@ -205,8 +208,25 @@
    "fieldtype": "Check",
    "label": "Is DM Thread",
    "read_only": 1
+  },
+  {
+   "fieldname": "extension_tab",
+   "fieldtype": "Tab Break",
+   "label": "Extension"
+  },
+  {
+   "fieldname": "bots_table",
+   "fieldtype": "Table",
+   "label": "Bots Name",
+   "options": "Channel Installed"
+  },
+  {
+   "fieldname": "bots_list_section",
+   "fieldtype": "Section Break",
+   "label": "Bots List"
   }
  ],
+ "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "links": [
   {
@@ -218,7 +238,7 @@
    "link_fieldname": "channel_id"
   }
  ],
- "modified": "2024-12-08 01:24:55.359995",
+ "modified": "2025-08-30 19:20:37.597458",
  "modified_by": "Administrator",
  "module": "Raven Channel Management",
  "name": "Raven Channel",
@@ -250,6 +270,7 @@
    "write": 1
   }
  ],
+ "row_format": "Dynamic",
  "search_fields": "type",
  "show_title_field_in_link": 1,
  "sort_field": "modified",
