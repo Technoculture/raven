@@ -133,7 +133,7 @@ export interface MemberSuggestions extends UserFields {
     is_member: boolean
 }
 
-const Tiptap = forwardRef(({ isEdit, slotBefore, fileProps, onMessageSend, onUpArrow, channelMembers, onUserType, channelCommands, channelID, replyMessage, clearReplyMessage, placeholder = 'Type a message...', messageSending, sessionStorageKey = 'tiptap-editor', disableSessionStorage = false, defaultText = '' }: TiptapEditorProps, ref) => {
+const Tiptap = forwardRef(({ isEdit, slotBefore, fileProps, onMessageSend, onUpArrow, channelMembers, onUserType, channelCommands, channelID, replyMessage, clearReplyMessage, placeholder = 'Type a message...  hello', messageSending, sessionStorageKey = 'tiptap-editor', disableSessionStorage = false, defaultText = '' }: TiptapEditorProps, ref) => {
 
     const { enabledUsers } = useContext(UserListContext)
 

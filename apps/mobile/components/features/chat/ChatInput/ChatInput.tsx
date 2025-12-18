@@ -109,7 +109,7 @@ const ChatInput = ({ channelID, onSendMessage }: ChatInputProps) => {
                     value={content}
                     multiline
                     placeholderTextColor={colors.grey}
-                    placeholder="Type a message..."
+                    placeholder="Type a message... Hello"
                     onChange={onContentChange}
                     partTypes={[
                         {

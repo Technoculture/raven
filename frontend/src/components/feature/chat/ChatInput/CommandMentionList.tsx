@@ -20,7 +20,6 @@ const CommandMentionList = forwardRef(({ items, command }: CommandMentionListPro
   const selectItem = (index: number) => {
     const item = items[index];
     if (item) {
-      console.log(item , "itemssss");
       command(item);
     }
   };
