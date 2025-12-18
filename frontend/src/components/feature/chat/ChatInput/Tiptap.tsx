@@ -133,7 +133,7 @@ export interface MemberSuggestions extends UserFields {
     is_member: boolean
 }
 
-const Tiptap = forwardRef(({ isEdit, slotBefore, fileProps, onMessageSend, onUpArrow, channelMembers, onUserType, channelCommands, channelID, replyMessage, clearReplyMessage, placeholder = 'Type a message...', messageSending, sessionStorageKey = 'tiptap-editor', disableSessionStorage = false, defaultText = '' }: TiptapEditorProps, ref) => {
+const Tiptap = forwardRef(({ isEdit, slotBefore, fileProps, onMessageSend, onUpArrow, channelMembers, onUserType, channelCommands, channelID, replyMessage, clearReplyMessage, placeholder = 'Type a message...  hello', messageSending, sessionStorageKey = 'tiptap-editor', disableSessionStorage = false, defaultText = '' }: TiptapEditorProps, ref) => {
 
     const { enabledUsers } = useContext(UserListContext)
 
@@ -335,19 +335,17 @@ const Tiptap = forwardRef(({ isEdit, slotBefore, fileProps, onMessageSend, onUpA
                                     return
                                 }
 
-                                const images = Array.from(
+                                const files = Array.from(
                                     event.clipboardData.files
-                                ).filter(file => /image/i.test(file.type))
-
-                                if (images.length === 0) {
+                                )
+                                if (files.length === 0) {
                                     return
                                 }
 
                                 event.preventDefault()
 
-                                images.forEach(image => {
-
-                                    fileProps.addFile(image)
+                                files.forEach(file => {
+                                    fileProps.addFile(file)
                                 })
                             }
                         }
