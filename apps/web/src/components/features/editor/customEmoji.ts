@@ -1,0 +1,70 @@
+import { Node, mergeAttributes } from "@tiptap/core"
+import { fileSrc, sitePath } from "@hooks/useFileSrc"
+import { Plugin, PluginKey } from "@tiptap/pm/state"
+import { customEmojiInputTransaction } from "./customEmojiInput"
+
+/**
+ * An inline custom emoji — an atomic image node. Custom emojis have no unicode
+ * character, so (unlike standard emojis, which insert as text) they're inserted as
+ * this node and serialize to a self-contained `<img data-type="customEmoji" src…>`.
+ * The message renderer (RichTextRenderer) shows that image; storing the URL inline
+ * means no lookup is needed at render time.
+ */
+export const CustomEmoji = Node.create({
+    name: "customEmoji",
+    inline: true,
+    group: "inline",
+    atom: true,
+    selectable: false,
+    draggable: false,
+
+    addAttributes() {
+        return {
+            // Saved as the site path; an address the app made loads only on that device.
+            src: { default: null, parseHTML: (element) => sitePath(element.getAttribute("src") ?? "") || null },
+            /** `:emoji_name:` — alt text + what a plain-text copy shows. */
+            alt: { default: null },
+        }
+    },
+
+    parseHTML() {
+        return [{ tag: 'img[data-type="customEmoji"]' }]
+    },
+
+    renderHTML({ HTMLAttributes }) {
+        return ["img", mergeAttributes(HTMLAttributes, { "data-type": "customEmoji", class: "emoji" })]
+    },
+
+    // The saved HTML keeps the site path; the editor shows the image through fileSrc.
+    addNodeView() {
+        return ({ node }) => {
+            const dom = document.createElement("img")
+            dom.className = "emoji"
+            dom.dataset.type = "customEmoji"
+            dom.alt = node.attrs.alt ?? ""
+            if (node.attrs.src) dom.src = fileSrc(node.attrs.src)
+            return { dom }
+        }
+    },
+
+    /** Plain-text representation (copy, `editor.getText()`) — the shortcode. */
+    renderText: ({ node }) => node.attrs.alt ?? "",
+
+    // A known `:name:` is always the emoji: typed, pasted, or already in a draft or a
+    // message being edited. Exception: after an unclosed backtick it stays text, so
+    // `:name:` can be typed as inline code.
+    addProseMirrorPlugins() {
+        return [
+            new Plugin({
+                key: new PluginKey("customEmojiInput"),
+                appendTransaction: (transactions, _oldState, state) =>
+                    transactions.some((tr) => tr.docChanged) ? customEmojiInputTransaction(state, transactions) : null,
+            }),
+        ]
+    },
+
+    onCreate() {
+        const tr = customEmojiInputTransaction(this.editor.state)
+        if (tr) this.editor.view.dispatch(tr.setMeta("addToHistory", false))
+    },
+})

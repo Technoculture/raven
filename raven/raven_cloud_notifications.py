@@ -2,13 +2,14 @@ import json
 from urllib.parse import urlparse
 
 import frappe
-from frappe.frappeclient import FrappeClient
+
+from raven.utils import make_api_call
 
 # ----- Utility Functions -----
 
 
 def get_site_name():
-	return urlparse(frappe.utils.get_url()).hostname
+	return urlparse(frappe.utils.get_url(allow_header_override=False)).hostname
 
 
 # ----- Token Management -----
@@ -20,14 +21,13 @@ def add_token_to_raven_cloud(user_id, token):
 	"""
 	raven_settings = frappe.get_single("Raven Settings")
 
-	client = FrappeClient(
-		url=raven_settings.push_notification_server_url,
+	url = f"{raven_settings.push_notification_server_url}/api/method/raven_cloud.api.notification.create_user_token"
+
+	make_api_call(
+		url=url,
 		api_key=raven_settings.push_notification_api_key,
 		api_secret=raven_settings.get_password("push_notification_api_secret"),
-	)
-
-	client.post_api(
-		"raven_cloud.api.notification.create_user_token",
+		method="POST",
 		params={
 			"user_id": user_id,
 			"token": token,
@@ -42,14 +42,13 @@ def delete_token_from_raven_cloud(user_id, token):
 	"""
 	raven_settings = frappe.get_single("Raven Settings")
 
-	client = FrappeClient(
-		url=raven_settings.push_notification_server_url,
+	url = f"{raven_settings.push_notification_server_url}/api/method/raven_cloud.api.notification.delete_user_token"
+
+	make_api_call(
+		url=url,
 		api_key=raven_settings.push_notification_api_key,
 		api_secret=raven_settings.get_password("push_notification_api_secret"),
-	)
-
-	client.post_api(
-		"raven_cloud.api.notification.delete_user_token",
+		method="POST",
 		params={
 			"user_id": user_id,
 			"token": token,
@@ -65,20 +64,22 @@ def sync_users_tokens_to_raven_cloud():
 	raven_settings = frappe.get_single("Raven Settings")
 	tokens = frappe.db.get_all("Raven Push Token", fields=["user", "fcm_token"], order_by="user")
 
-	# We need to divide these into chunks of 10
-	chunks = [tokens[i : i + 10] for i in range(0, len(tokens), 10)]
+	url = f"{raven_settings.push_notification_server_url}/api/method/raven_cloud.api.notification.import_user_tokens"
 
-	for chunk in chunks:
-		client = FrappeClient(
-			url=raven_settings.push_notification_server_url,
-			api_key=raven_settings.push_notification_api_key,
-			api_secret=raven_settings.get_password("push_notification_api_secret"),
-		)
+	response = make_api_call(
+		url=url,
+		api_key=raven_settings.push_notification_api_key,
+		api_secret=raven_settings.get_password("push_notification_api_secret"),
+		method="POST",
+		params={"site_name": get_site_name(), "tokens": json.dumps(tokens)},
+	)
+	message = response.get("message")
 
-		client.post_api(
-			"raven_cloud.api.notification.import_user_tokens",
-			params={
-				"site_name": get_site_name(),
-				"tokens": json.dumps(chunk),
-			},
+	if message.get("status") == "success":
+		return "Tokens synced successfully"
+	else:
+		frappe.log_error(
+			title="Raven Cloud Sync Tokens Error",
+			message=f"Failed to sync tokens: {message.get('message')}",
 		)
+		return "Failed to sync tokens"

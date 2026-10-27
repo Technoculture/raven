@@ -1,4 +1,4 @@
-# Copyright (c) 2024, The Commit Company and contributors
+# Copyright (c) 2026, Frappe Technologies Pvt. Ltd. and contributors
 # For license information, please see license.txt
 
 import json
@@ -172,7 +172,7 @@ class RavenBot(Document):
 			frappe.throw(
 				_(
 					"Connection to OpenAI API failed. Please check your Organization ID and API Key for any extra spaces. Error: {0}"
-				).format(e)
+				).format(str(e))
 			)
 		except Exception as e:
 			if "model_not_found" in str(e):
@@ -429,14 +429,19 @@ class RavenBot(Document):
 		user_raven_user = frappe.db.get_value("Raven User", {"user": user_id}, "name")
 		if not user_raven_user:
 			return None
+
+		# get canonical order of the users
+		if self.raven_user > user_raven_user:
+			dm_user_1, dm_user_2 = self.raven_user, user_raven_user
+		else:
+			dm_user_1, dm_user_2 = user_raven_user, self.raven_user
+
 		channel_name = frappe.db.get_value(
 			"Raven Channel",
 			filters={
 				"is_direct_message": 1,
-				"channel_name": [
-					"in",
-					[self.raven_user + " _ " + user_raven_user, user_raven_user + " _ " + self.raven_user],
-				],
+				"dm_user_1": dm_user_1,
+				"dm_user_2": dm_user_2,
 			},
 		)
 		if channel_name:
@@ -519,10 +524,17 @@ class RavenBot(Document):
 			user_raven_user = get_raven_user(user_id)
 			if not user_raven_user:
 				frappe.throw(f"User {user_id} is not added as a Raven User")
+
+			# get canonical order of the users
+			if self.raven_user > user_raven_user:
+				dm_user_1, dm_user_2 = self.raven_user, user_raven_user
+			else:
+				dm_user_1, dm_user_2 = user_raven_user, self.raven_user
+
 			channel = frappe.get_doc(
 				{
 					"doctype": "Raven Channel",
-					"channel_name": self.raven_user + " _ " + user_raven_user,
+					"channel_name": dm_user_1 + " _ " + dm_user_2,
 					"is_direct_message": 1,
 				}
 			)
@@ -554,8 +566,13 @@ class RavenBot(Document):
 		markdown: If True, the text will be converted to HTML.
 		file: The file to send to the user.
 
-		Returns the message ID of the message sent
+		Returns the message ID of the message sent, or None if the user is disabled
 		"""
+		# A disabled user will never read the message. Skip quietly, no error log.
+		# A user who is not on Raven at all still raises below, as before.
+		enabled = frappe.db.get_value("Raven User", {"user": user_id}, "enabled")
+		if enabled is not None and not enabled:
+			return None
 
 		channel_id = self.create_direct_message_channel(user_id)
 

@@ -41,7 +41,6 @@ def react(message_id: str, reaction: str, is_custom: bool = False, emoji_name: s
 			}
 		).insert(ignore_permissions=True)
 
-		calculate_message_reaction(message_id, channel_id)
 		return "Ok"
 
 	except frappe.exceptions.UniqueValidationError:
@@ -51,11 +50,28 @@ def react(message_id: str, reaction: str, is_custom: bool = False, emoji_name: s
 			filters={"message": message_id, "owner": user, "reaction_escaped": reaction_escaped},
 		)
 
+		# frappe.db.delete is a raw SQL delete — it runs NO document hooks, so
+		# RavenMessageReaction.after_delete never fires on this path and the
+		# message owner's client was never told to update its notification
+		# badge (the count stuck until the next focus/reconnect reconcile).
+		# Publish the same event here. `removed`: the client can't know locally
+		# whether the message still has OTHER unread reactions, so it refetches
+		# its unread set instead of blindly deleting the id.
+		message_owner = frappe.get_cached_value("Raven Message", message_id, "owner")
+		if message_owner and message_owner != user:
+			frappe.publish_realtime(
+				"raven_reaction_notification",
+				{"message_id": message_id, "removed": True},
+				user=message_owner,
+				after_commit=True,
+			)
+
 		# Hook to trigger when delete reaction
 		for fn in frappe.get_hooks("raven_message_reaction_after_delete"):
 			frappe.get_attr(fn)(message_id)
 
 		calculate_message_reaction(message_id, channel_id)
+
 		return "Ok"
 	except Exception as e:
 		frappe.throw(_("Error reacting to message {0}").format(str(e)))
@@ -103,7 +119,8 @@ def calculate_message_reaction(message_id, channel_id: str = None, do_not_publis
 	if do_not_publish:
 		return
 
-	frappe.publish_realtime(
+	message_doc = frappe.get_doc("Raven Message", message_id)
+	message_doc.publish_visibility_aware_event(
 		"message_reacted",
 		{
 			"channel_id": channel_id,
@@ -111,7 +128,34 @@ def calculate_message_reaction(message_id, channel_id: str = None, do_not_publis
 			"message_id": message_id,
 			"reactions": json.dumps(total_reactions),
 		},
-		doctype="Raven Channel",
-		docname=channel_id,  # Adding this to automatically add the room for the event via Frappe
 		after_commit=False,
 	)
+
+
+@frappe.whitelist(methods=["GET"])
+def most_used_reactions(limit: int = 6):
+	"""
+	The current user's most-used reactions over the past 3 months — feeds the
+	quick-emoji suggestions in preferences. Removed reactions don't count
+	(un-reacting deletes the row), which is the better "your emojis" signal.
+	"""
+	from frappe.query_builder import Order
+	from frappe.query_builder.functions import Count
+
+	reaction = frappe.qb.DocType("Raven Message Reaction")
+	return (
+		frappe.qb.from_(reaction)
+		.select(
+			reaction.reaction,
+			reaction.is_custom,
+			reaction.reaction_escaped,
+			Count(reaction.name).as_("uses"),
+		)
+		.where(reaction.owner == frappe.session.user)
+		.where(reaction.creation > frappe.utils.add_to_date(frappe.utils.now_datetime(), months=-3))
+		.groupby(reaction.reaction, reaction.is_custom, reaction.reaction_escaped)
+		.orderby(Count(reaction.name), order=Order.desc)
+		# Clamp to 1..6 — a zero or negative limit would reach SQL as-is and
+		# either return nothing or error.
+		.limit(max(min(frappe.utils.cint(limit), 6), 1))
+	).run(as_dict=True)

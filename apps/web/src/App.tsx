@@ -1,0 +1,286 @@
+import { createBrowserRouter, createRoutesFromElements, RouterProvider, Route, Navigate } from "react-router-dom"
+import Channel from "@pages/workspace/Channel"
+import Notifications from "@pages/notifications/Notifications"
+import NotificationChatRoute from "@pages/notifications/NotificationChatRoute"
+import { MessagePermalinkSkeleton } from "@pages/message/MessagePermalinkSkeleton"
+import { ProfilePageSkeleton } from "@pages/profile/ProfilePageSkeleton"
+import { ShareTargetSkeleton } from "@pages/share/ShareTargetSkeleton"
+import { ListPageSkeleton } from "@components/layout/ListPageSkeleton"
+import _ from "@lib/translate"
+import ErrorPage from "@pages/ErrorPage"
+import Threads from "@pages/threads/Threads"
+import DirectMessages, { DirectMessagesIndex } from "@pages/dm-channel/DirectMessages"
+import DirectMessage from "@pages/dm-channel/DirectMessage"
+import ThreadDrawerRoute from "@components/features/message/ThreadDrawerRoute"
+import { WorkspaceRedirect } from "@components/workspace-switcher/WorkspaceRedirect"
+import { FrappeContext, FrappeProvider, type FrappeConfig } from 'frappe-react-sdk'
+import { redirectToLoginIfSessionDied } from '@lib/authRecovery'
+import { initEmojiMart } from '@lib/emojiMart'
+import { isLoggedIn } from "@lib/sessionUser"
+import { siteKey, APP_HEADERS } from '@lib/site'
+import { Toaster } from "@components/ui/sonner"
+import { TooltipProvider } from "@radix-ui/react-tooltip"
+import { LucideProvider } from "lucide-react"
+import { lazy, Suspense, useContext, useEffect } from "react"
+import AppShell from "@components/layout/AppShell"
+import { useAtomValue } from "jotai"
+import { lastChannelAtom, lastWorkspaceAtom } from "@utils/lastVisitedAtoms"
+import { useIsMobile } from "@hooks/use-mobile"
+import { useWorkspaces } from "@hooks/useWorkspaces"
+import WorkspaceLayout from "@pages/workspace/WorkspaceLayout"
+import NoWorkspace from "@components/features/workspaces/NoWorkspace"
+import { getIndexTarget } from "@utils/indexTarget"
+
+// Code-split the rarely-visited pages out of the main bundle. React.lazy +
+// Suspense (not the data router's route.lazy) on purpose: route.lazy blocks
+// rendering the route until its module resolves — a blank screen on the COLD
+// entries these pages mostly get (shared links, the OS share sheet) — while
+// Suspense paints the app shell + fallback immediately.
+// Every lazy route gets a silhouette of its own layout as its Suspense
+// fallback — chunk-load must never flash blank. On mobile the tab bar lives
+// INSIDE each page's chunk, so the fallbacks mount the real (eager) footer:
+// the frame stays put and the tabs stay tappable during the load.
+const MessagePermalink = lazy(() => import("@pages/message/MessagePermalink"))
+const ShareTarget = lazy(() => import("@pages/share/ShareTarget"))
+const Later = lazy(() => import("@pages/later/Later"))
+const MobileProfile = lazy(() => import("@pages/profile/Profile"))
+const Search = lazy(() => import("@pages/search/Search"))
+const ScheduledMessages = lazy(() => import("@pages/scheduled-messages/ScheduledMessages"))
+
+/**
+ * Home ("/") redirect, evaluated at RENDER time — module-scope reads froze
+ * the last-visited values (and viewport width) at boot, so navigating home
+ * mid-session used stale targets.
+ */
+const IndexRedirect = () => {
+  const lastWorkspace = useAtomValue(lastWorkspaceAtom)
+  const lastChannel = useAtomValue(lastChannelAtom)
+  const isMobile = useIsMobile()
+  const { workspaces, isLoading, error } = useWorkspaces()
+
+  // Decide only on a list the fetch proved: a failed fetch also leaves it empty,
+  // and that must not read as "in no workspace".
+  if (isLoading || (error && workspaces.length === 0)) return null
+
+  const target = getIndexTarget({ lastWorkspace, lastChannel, workspaces, isMobile })
+  return target ? <Navigate to={target} replace /> : <NoWorkspace />
+}
+
+
+/**
+ * Data router (createBrowserRouter) rather than the declarative <BrowserRouter>:
+ * React Router's View Transitions integration (`viewTransition` on links/navigate,
+ * used for the desktop content cross-fade) only runs in data mode — declarative mode
+ * silently ignores it. Same route tree; a data router must be created ONCE at module
+ * scope, not per render.
+ */
+// Components rather than elements: the router tree is built at module load, before the
+// translations may be in place, so the titles are translated when the skeleton renders.
+const SearchSkeleton = () => <ListPageSkeleton title={_("Search")} />
+const LaterSkeleton = () => <ListPageSkeleton title={_("Later")} />
+const ScheduledMessagesSkeleton = () => <ListPageSkeleton title={_("Scheduled Messages")} />
+
+const router = createBrowserRouter(
+  createRoutesFromElements(
+    // errorElement: the last-resort boundary for uncaught render/route errors
+    // anywhere in the tree (incl. stale-chunk failures after a deploy) — the
+    // router swaps the view for ErrorPage instead of white-screening.
+    <Route path="/" element={<AppShell />} errorElement={<ErrorPage />}>
+      <Route index element={<IndexRedirect />} />
+      {/* Workspace: channels and settings only; search is global at /search above */}
+      <Route path=":workspaceID" element={<WorkspaceLayout />}>
+        <Route index element={<WorkspaceRedirect />} />
+        <Route path=":id" element={<Channel />}>
+          <Route path="thread/:threadID" element={<ThreadDrawerRoute />} />
+        </Route>
+      </Route>
+      <Route path="dm-channel" element={<DirectMessages />}>
+        <Route index element={<DirectMessagesIndex />} />
+        <Route path=":id" element={<DirectMessage />}>
+          <Route path="thread/:threadID" element={<ThreadDrawerRoute />} />
+        </Route>
+      </Route>
+      <Route path="notifications" element={<Notifications />}>
+        <Route path=":channelID/:messageID?" element={<NotificationChatRoute />} />
+      </Route>
+      <Route path="threads" element={<Threads />}>
+        <Route path=":threadID" element={<ThreadDrawerRoute />} />
+      </Route>
+      {/* The `key` on every lazy route's Suspense is LOAD-BEARING. Adjacent
+          lazy routes render the same shape at the same Outlet position, so
+          without keys React reconciles them into ONE reused Suspense instance
+          — and a reused boundary suspending inside a router transition keeps
+          showing its old content (the previous PAGE) instead of the fallback.
+          Keys force a fresh boundary per route; a new boundary shows its
+          skeleton immediately, even mid-transition. */}
+      <Route path="search" element={<Suspense key="search" fallback={<SearchSkeleton />}><Search /></Suspense>}>
+        <Route path=":channelID/:messageID" element={<NotificationChatRoute />} />
+      </Route>
+      <Route path="later" element={<Suspense key="later" fallback={<LaterSkeleton />}><Later /></Suspense>}>
+        <Route path=":channelID/:messageID" element={<NotificationChatRoute />} />
+      </Route>
+      <Route path="scheduled-messages" element={<Suspense key="scheduled-messages" fallback={<ScheduledMessagesSkeleton />}><ScheduledMessages /></Suspense>} />
+      {/* Fallback = the page's silhouette WITH the real tab bar: the footer
+          lives inside this lazy chunk, so a null fallback blanked the whole
+          screen (footer included) for the duration of the load. */}
+      <Route path="profile" element={<Suspense key="profile" fallback={<ProfilePageSkeleton />}><MobileProfile /></Suspense>} />
+      {/* OS share sheet lands here (manifest share_target) — conversation picker */}
+      <Route path="share-target" element={<Suspense key="share-target" fallback={<ShareTargetSkeleton />}><ShareTarget /></Suspense>} />
+      {/* Permalink resolver — "Copy message link" always produces this route; it
+          redirects to the message's real home (channel, DM, or thread). The
+          fallback is the SAME skeleton the page renders while resolving, so
+          chunk-load and data-load read as one continuous state. */}
+      <Route
+        path="message/:messageID"
+        element={
+          <Suspense key="message-permalink" fallback={<MessagePermalinkSkeleton />}>
+            <MessagePermalink />
+          </Suspense>
+        }
+      />
+      {/* Catch-all 404. route.lazy (not React.lazy) is fine here — the brief
+          blank-while-loading tradeoff doesn't matter for a page nobody lands
+          on intentionally, and it keeps the chunk out of the main bundle. */}
+      <Route path="*" lazy={() => import("@pages/NotFound")} />
+    </Route>,
+  ),
+  { basename: import.meta.env.VITE_BASE_NAME },
+)
+
+/** Provider settings the native entry passes; absent in the browser. */
+export type NativeProvider = {
+  url: string
+  siteName: string
+  getToken: () => string
+  onRequestError: (e: { httpStatus?: number }) => void
+  /** The native socket bridge; the sdk's own socket cannot pass Frappe's origin check from a WebView. */
+  socket: FrappeConfig["socket"]
+}
+
+const NativeSocketProvider = ({ socket, children }: { socket: FrappeConfig["socket"]; children: React.ReactNode }) => {
+  const config = useContext(FrappeContext) as FrappeConfig
+  return <FrappeContext.Provider value={{ ...config, socket }}>{children}</FrappeContext.Provider>
+}
+
+function App({ native }: { native?: NativeProvider }) {
+
+  // Login check, SYNCHRONOUS and before the router renders. It used to live in
+  // a post-paint effect, so a logged-out visitor rendered the whole app for a
+  // few frames — ProtectedRoute's "no access" alert flashed — before the
+  // redirect kicked in. Checked during render, we paint nothing instead while
+  // the browser navigates to login. (Frappe marks anonymous visitors with
+  // user_id=Guest; dev builds skip the redirect — there's no local login page.)
+  const shouldRedirectToLogin = !isLoggedIn() && !import.meta.env.DEV && !native
+
+  useEffect(() => {
+    if (shouldRedirectToLogin) {
+      window.location.href = `/login?redirect-to=${window.location.pathname}`
+    }
+  }, [shouldRedirectToLogin])
+
+  if (shouldRedirectToLogin) {
+    return null
+  }
+
+  const content = (
+    <>
+      <RouterProvider router={router} />
+      <Toaster />
+    </>
+  )
+
+  return (
+    <LucideProvider
+      strokeWidth={1.5}
+    >
+      <TooltipProvider>
+        <FrappeProvider
+          url={native?.url ?? (import.meta.env.VITE_FRAPPE_PATH ?? '')}
+          tokenParams={native ? { useToken: true, type: "Bearer", token: native.getToken } : undefined}
+          customHeaders={native ? APP_HEADERS : undefined}
+          socketPort={import.meta.env.VITE_SOCKET_PORT ? import.meta.env.VITE_SOCKET_PORT : undefined}
+          swrConfig={{
+            // NO global errorRetryCount: SWR's default retry is UNLIMITED
+            // exponential backoff, and that's what we want for the fetches
+            // that gate the whole UI (channel list etc.) — a cap here once
+            // stranded cold starts on flaky networks on skeletons forever.
+            // Hooks that shouldn't retry set shouldRetryOnError/errorRetryCount
+            // themselves.
+            // Dead-session recovery: Frappe rewrites the user_id cookie to
+            // "Guest" on the failing response itself, so any fetch error while
+            // the cookie says Guest means the session is gone — go to login.
+            onError: native ? native.onRequestError : redirectToLoginIfSessionDied,
+            // @ts-ignore - SWR config
+            provider: localStorageProvider
+          }}
+          siteName={native?.siteName ?? getSiteName()}
+          enableSocket={!native}
+        >
+          {native ? <NativeSocketProvider socket={native.socket}>{content}</NativeSocketProvider> : content}
+        </FrappeProvider>
+      </TooltipProvider>
+    </LucideProvider>
+  )
+}
+
+/** ----- SWR Caching ----- */
+
+const CACHE_KEYS = [
+  "raven.api.login.get_context",
+  "workspaces_list",
+  "channel_list",
+  "message-actions-list",
+]
+
+const isCachedKey = (key: string) => CACHE_KEYS.some((cacheKey) => key.includes(cacheKey))
+
+function localStorageProvider() {
+  // When initializing, we restore the data from `localStorage` into a map.
+  // Check if local storage is recent (less than a week). Else start with a fresh cache.
+  const timestamp = localStorage.getItem(siteKey('app-cache-timestamp'))
+  let cache = '[]'
+  if (timestamp && Date.now() - parseInt(timestamp) < 7 * 24 * 60 * 60 * 1000) {
+    const localCache = localStorage.getItem(siteKey('app-cache'))
+    if (localCache) {
+      cache = localCache
+    }
+  }
+
+  const map = new Map<string, string | number>(JSON.parse(cache))
+
+  const persist = () => {
+    if (!isLoggedIn()) {
+      localStorage.removeItem(siteKey('app-cache'))
+      localStorage.removeItem(siteKey('app-cache-timestamp'))
+      return
+    }
+    const cacheEntries = [...map].filter(([key]) => isCachedKey(key))
+    localStorage.setItem(siteKey('app-cache'), JSON.stringify(cacheEntries))
+    localStorage.setItem(siteKey('app-cache-timestamp'), Date.now().toString())
+  }
+
+  window.addEventListener('beforeunload', persist)
+  // Backgrounding is the last signal before the OS kills a native app.
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) persist()
+  })
+
+  // We still use the map for write & read for performance.
+  return map
+}
+
+// Initialize emoji-mart (Apple set). Custom emojis are registered later, once
+// fetched, via useRegisterCustomEmojis (re-init keeps this data).
+initEmojiMart()
+
+const getSiteName = () => {
+  if (window.frappe?.boot?.versions?.frappe.startsWith('14')) {
+    return import.meta.env.VITE_SITE_NAME
+  }
+  else {
+    return window.frappe?.boot?.sitename ?? import.meta.env.VITE_SITE_NAME
+  }
+}
+
+
+export default App
