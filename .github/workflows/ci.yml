@@ -43,12 +43,12 @@ jobs:
       - name: Setup Python
         uses: actions/setup-python@v4
         with:
-          python-version: "3.10"
+          python-version: "3.14"
 
       - name: Setup Node
         uses: actions/setup-node@v3
         with:
-          node-version: 18
+          node-version: 24
           check-latest: true
 
       - name: Cache pip
@@ -83,7 +83,7 @@ jobs:
       - name: Install
         working-directory: /home/runner/frappe-bench
         run: |
-          bench get-app https://github.com/The-Commit-Company/Raven.git $GITHUB_WORKSPACE
+          bench get-app https://github.com/frappe/Raven.git $GITHUB_WORKSPACE
           bench setup requirements
           bench new-site --db-root-password root --admin-password admin test_site
           bench --site test_site install-app raven

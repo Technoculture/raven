@@ -1,0 +1,72 @@
+import { scan } from "react-scan";
+import { StrictMode } from 'react'
+import { createRoot } from 'react-dom/client'
+import './index.css'
+import App from './App.tsx'
+import { ThemeProvider } from "./components/theme-provider"
+
+scan({
+  enabled: true,
+});
+
+
+import { initPushNotifications, isStandalone } from "@lib/push";
+import { loadTranslations } from "@lib/translations";
+
+const render = () => {
+  // After boot lands: the push config (firebase_client_config) comes from it.
+  initPushNotifications()
+  createRoot(document.getElementById('root')!).render(
+    <StrictMode>
+      <ThemeProvider>
+        <App />
+      </ThemeProvider>
+    </StrictMode>,
+  )
+}
+
+if (import.meta.env.DEV) {
+  fetch('/api/method/raven.www.raven.get_context_for_dev', {
+    method: 'POST',
+  })
+    .then(response => response.json())
+    .then((values) => {
+      const v = JSON.parse(values.message)
+      if (!window.frappe) window.frappe = {};
+      window.frappe.boot = v
+      return loadTranslations(v)
+    })
+    .then(render)
+} else {
+  // Boot is inlined by the Jinja entry template. An OFFLINE (app-shell) load
+  // serves the BUILT index.html from the service worker's cache instead — its
+  // Jinja is unrendered, so the whole inline boot script fails to parse and
+  // window.frappe never gets set. Recover the last ONLINE load's boot from
+  // localStorage so the shell still knows who you are, your settings, etc.
+  if (!window.frappe?.boot) {
+    try {
+      const cached = localStorage.getItem("raven-boot-cache")
+      if (cached) {
+        if (!window.frappe) window.frappe = {}
+        window.frappe.boot = JSON.parse(cached)
+      }
+    } catch {
+      // No usable cached boot — the shell still renders; boot readers degrade.
+    }
+  } else if (isStandalone()) {
+    // Fresh server boot — cache it for offline launches, off the critical path.
+    // Installed app only: browser-tab sessions shouldn't leave boot at rest on
+    // a possibly-shared machine (and don't get the offline shell anyway).
+    window.setTimeout(() => {
+      try {
+        localStorage.setItem("raven-boot-cache", JSON.stringify(window.frappe.boot))
+      } catch {
+        // Quota/private mode — offline loads just won't have boot.
+      }
+    }, 3000)
+  }
+  // Frappe 15 and 16 put the translations in the boot; develop serves them separately. Either
+  // way they are in place before the first render, so nothing shows in English first.
+  const boot = window.frappe?.boot
+  void (boot ? loadTranslations(boot) : Promise.resolve()).then(render)
+}

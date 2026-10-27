@@ -1,0 +1,327 @@
+import { FieldValues, RegisterOptions, useFormContext } from "react-hook-form"
+import { FormControl, FormDescription, FormField, FormItem, FormLabel, FormMessage, FormRequiredIndicator } from "@components/ui/form"
+import _ from "@lib/translate"
+import ClearFieldButton from "@components/common/ClearFieldButton"
+import { Input } from "./input"
+import { ComponentProps, useState } from "react"
+import { formatDate, parseTypedDate, USER_DATE_FORMAT, toDate } from "@lib/date"
+import { Popover, PopoverContent, PopoverTrigger } from "./popover"
+import { Button } from "./button"
+import { CalendarIcon } from "lucide-react"
+import { Calendar } from "./calendar"
+import dayjs from "dayjs"
+import { Textarea } from "./textarea"
+import LinkFieldCombobox, { LinkFieldComboboxProps } from "@components/common/LinkFieldComboBox/LinkFieldCombobox"
+import { Select, SelectContent, SelectTrigger, SelectValue } from "./select"
+import { Switch } from "./switch"
+import { Checkbox } from "./checkbox"
+
+interface FormElementProps {
+    name: string,
+    rules?: Omit<RegisterOptions<FieldValues, string>, "disabled" | "valueAsNumber" | "valueAsDate" | "setValueAs">,
+    label: string,
+    isRequired?: boolean,
+    disabled?: boolean,
+    formDescription?: React.ReactNode,
+    hideLabel?: boolean,
+    readOnly?: boolean,
+
+}
+
+interface DataFieldProps extends FormElementProps {
+    inputProps?: Omit<ComponentProps<"input">, "value" | "onChange" | "onBlur" | "name" | "ref">
+}
+
+export const DataField = ({ name, rules, label, isRequired, formDescription, inputProps, hideLabel, disabled, readOnly }: DataFieldProps) => {
+
+    const { control } = useFormContext()
+    // 140 is Frappe's Data field length. A password input backs a Password
+    // field, which is stored in the auth table with no length, so capping it
+    // silently cut long keys (OpenAI project keys are over 160 characters).
+    const maxLength = inputProps?.type === "password" ? undefined : 140
+    return <FormField
+        control={control}
+        disabled={disabled}
+        name={name}
+        rules={rules}
+        render={({ field }) => (
+            <FormItem className='flex flex-col'>
+                <FormLabel className={hideLabel ? 'sr-only' : ''}>{label}{isRequired && <FormRequiredIndicator />}</FormLabel>
+                <FormControl>
+                    <Input {...field} maxLength={maxLength} aria-readonly={readOnly} readOnly={readOnly} {...inputProps} />
+                </FormControl>
+                {formDescription && <FormDescription>{formDescription}</FormDescription>}
+                <FormMessage />
+            </FormItem>
+        )}
+    />
+}
+
+interface SelectFieldProps extends FormElementProps {
+    /** Show a clear (×) button in place of the chevron while a value is picked. */
+    clearable?: boolean
+    placeholder?: string
+    /** Cap/style the dropdown, e.g. "max-w-[360px]" for long option labels. */
+    dropdownClassName?: string
+    dropdownAlign?: "start" | "center" | "end"
+    children: React.ReactNode
+}
+
+export const SelectFormField = ({ name, rules, label, isRequired, formDescription, hideLabel, children, disabled, readOnly, clearable, placeholder, dropdownClassName, dropdownAlign }: SelectFieldProps) => {
+
+    const { control } = useFormContext()
+
+    return <FormField
+        control={control}
+        name={name}
+        disabled={disabled}
+        rules={rules}
+        render={({ field }) => {
+            const showClear = Boolean(clearable && field.value && !disabled && !readOnly)
+            return (
+            <FormItem>
+                <FormLabel className={hideLabel ? 'sr-only' : ''}>{label}{isRequired && <FormRequiredIndicator />}</FormLabel>
+                {/* The inner FormControl (around SelectTrigger) carries the a11y wiring; no outer one.
+                    min-w-0: FormItem is a grid — without it a long nowrap value widens the column. */}
+                <div className="relative min-w-0">
+                    <Select onValueChange={field.onChange} value={field.value} disabled={disabled || readOnly} aria-readonly={readOnly}>
+                        <FormControl>
+                            {/* svg:last-child = Radix's chevron; the clear × takes its slot. */}
+                            <SelectTrigger className={showClear ? "w-full pr-7 [&>svg:last-child]:hidden" : "w-full"}>
+                                <SelectValue placeholder={placeholder} />
+                            </SelectTrigger>
+                        </FormControl>
+                        <SelectContent className={dropdownClassName} align={dropdownAlign}>
+                            {children}
+                        </SelectContent>
+                    </Select>
+                    {showClear ? <ClearFieldButton onClick={() => field.onChange("")} /> : null}
+                </div>
+                {formDescription && <FormDescription>{formDescription}</FormDescription>}
+                <FormMessage />
+            </FormItem>
+            )
+        }}
+    />
+}
+
+interface DateFieldProps extends FormElementProps {
+    inputProps?: Omit<ComponentProps<"input">, "value" | "onChange" | "onBlur" | "name" | "ref">
+}
+
+export const DateField = ({ name, rules, label, isRequired, formDescription, inputProps, hideLabel, disabled }: DateFieldProps) => {
+
+    const { control } = useFormContext()
+
+    const DatePicker = ({ field }: { field: FieldValues }) => {
+
+        const userDateFormat = USER_DATE_FORMAT
+        const [open, setOpen] = useState(false)
+
+        const [value, setValue] = useState<string | undefined>(field.value ? formatDate(field.value) : undefined)
+
+        const date = field.value ? toDate(field.value) : undefined
+
+        return <div className="relative flex gap-2">
+            <FormControl>
+                <Input className="pe-10"
+                    name={field.name}
+                    onBlur={() => {
+                        setValue(formatDate(field.value))
+                        field.onBlur()
+                    }}
+                    placeholder={userDateFormat}
+                    value={value}
+                    onChange={(e) => {
+                        setValue(e.target.value)
+                        if (e.target.value) {
+                            // Strict user-format parse first, then natural language
+                            const parsed = parseTypedDate(e.target.value)
+                            if (parsed) {
+                                field.onChange(formatDate(parsed, "YYYY-MM-DD"))
+                            }
+                        } else {
+                            field.onChange("")
+                        }
+                    }}
+                    onKeyDown={(e) => {
+                        if (e.key === "ArrowDown") {
+                            e.preventDefault()
+                            setOpen(true)
+                        }
+                    }}
+                    maxLength={140}
+                    {...inputProps} />
+            </FormControl>
+            <Popover open={open} onOpenChange={setOpen}>
+                <PopoverTrigger asChild>
+                    <Button
+                        id="date-picker-button"
+                        variant="ghost"
+                        size="xs"
+                        isIconButton
+                        className="absolute top-1/2 ltr:right-2 rtl:left-2 -translate-y-1/2"
+                    >
+                        <CalendarIcon />
+                        <span className="sr-only">{_("Select date")}</span>
+                    </Button>
+                </PopoverTrigger>
+                <PopoverContent className="w-auto overflow-hidden p-0" align="center">
+                    <Calendar
+                        mode="single"
+                        selected={date}
+                        fixedWeeks
+                        endMonth={dayjs().add(1, "year").toDate()}
+                        captionLayout="dropdown"
+                        defaultMonth={date}
+                        onSelect={(date) => {
+                            setValue(formatDate(date))
+                            field.onChange(formatDate(date, "YYYY-MM-DD"))
+                            setOpen(false)
+                        }}
+                    />
+                </PopoverContent>
+            </Popover>
+        </div>
+    }
+
+    return <FormField
+        control={control}
+        name={name}
+        disabled={disabled}
+        rules={rules}
+        render={({ field }) => (
+            <FormItem className='flex flex-col'>
+                <FormLabel className={hideLabel ? 'sr-only' : ''}>{label}{isRequired && <FormRequiredIndicator />}</FormLabel>
+                <DatePicker field={field} />
+                {formDescription && <FormDescription>{formDescription}</FormDescription>}
+                <FormMessage />
+            </FormItem>
+        )}
+    />
+}
+
+
+interface SmallTextFieldProps extends FormElementProps {
+    inputProps?: Omit<ComponentProps<"textarea">, "value" | "onChange" | "onBlur" | "name" | "ref">
+}
+
+export const SmallTextField = ({ name, rules, label, isRequired, formDescription, inputProps, hideLabel, disabled, readOnly }: SmallTextFieldProps) => {
+
+    const { control } = useFormContext()
+    return <FormField
+        control={control}
+        name={name}
+        disabled={disabled}
+        rules={rules}
+        render={({ field }) => (
+            <FormItem className='flex flex-col'>
+                <FormLabel className={hideLabel ? 'sr-only' : ''}>{label}{isRequired && <FormRequiredIndicator />}</FormLabel>
+                <FormControl>
+                    <Textarea {...field} {...inputProps} readOnly={readOnly} aria-readonly={readOnly} />
+                </FormControl>
+                {formDescription && <FormDescription>{formDescription}</FormDescription>}
+                <FormMessage />
+            </FormItem>
+        )}
+    />
+}
+
+
+interface LinkFormFieldProps extends FormElementProps, Omit<LinkFieldComboboxProps, 'value' | 'onChange'> {
+}
+
+export const LinkFormField = ({ name, rules, label, isRequired, formDescription, hideLabel, disabled, readOnly, ...inputProps }: LinkFormFieldProps) => {
+
+    const { control } = useFormContext()
+
+    return <FormField
+        control={control}
+        name={name}
+        disabled={disabled}
+        rules={rules}
+        render={({ field }) => (
+            <FormItem className='flex flex-col'>
+                <FormLabel className={hideLabel ? 'sr-only' : ''}>{label}{isRequired && <FormRequiredIndicator />}</FormLabel>
+                <LinkFieldCombobox {...inputProps} value={field.value} onChange={field.onChange} useInForm disabled={disabled} readOnly={readOnly} />
+                {formDescription && <FormDescription>{formDescription}</FormDescription>}
+                <FormMessage />
+            </FormItem>
+        )}
+    />
+}
+
+interface SwitchFieldProps extends Omit<FormElementProps, "isRequired"> {
+    /** Stored as Frappe's 0 | 1 (not boolean). */
+    intValue?: boolean
+}
+
+/**
+ * A labelled switch row (label + description on the left, Switch on the right) —
+ * the standard on/off settings control. `intValue` stores Frappe's 0 | 1 rather
+ * than a boolean (the shape Raven Settings and most doctypes use).
+ */
+export const SwitchFormField = ({ name, rules, label, formDescription, disabled, readOnly, intValue = true }: SwitchFieldProps) => {
+
+    const { control } = useFormContext()
+
+    return <FormField
+        control={control}
+        name={name}
+        disabled={disabled}
+        rules={rules}
+        render={({ field }) => (
+            <FormItem className="flex flex-row items-start justify-between gap-4">
+                <div className="space-y-0.5">
+                    <FormLabel>{label}</FormLabel>
+                    {formDescription && <FormDescription>{formDescription}</FormDescription>}
+                </div>
+                <FormControl>
+                    <Switch
+                        size="md"
+                        checked={intValue ? Boolean(field.value) : field.value}
+                        disabled={disabled || readOnly}
+                        onCheckedChange={(checked) => field.onChange(intValue ? (checked ? 1 : 0) : checked)}
+                    />
+                </FormControl>
+            </FormItem>
+        )}
+    />
+}
+
+interface CheckboxFieldProps extends FormElementProps {
+    /** Stored as Frappe's 0 | 1 (not boolean). */
+    intValue?: boolean
+}
+
+/**
+ * A labelled checkbox row — the doc-form counterpart to SwitchFormField (which is
+ * the settings-row control). Label sits to the RIGHT of the box, desk-style.
+ */
+export const CheckboxFormField = ({ name, rules, label, isRequired, formDescription, disabled, readOnly, intValue = true }: CheckboxFieldProps) => {
+
+    const { control } = useFormContext()
+
+    return <FormField
+        control={control}
+        name={name}
+        disabled={disabled}
+        rules={rules}
+        render={({ field }) => (
+            <FormItem>
+                <div className="flex items-center gap-2">
+                    <FormControl>
+                        <Checkbox
+                            checked={intValue ? field.value === 1 : !!field.value}
+                            disabled={disabled || readOnly}
+                            onCheckedChange={(checked) => field.onChange(intValue ? (checked ? 1 : 0) : checked === true)}
+                        />
+                    </FormControl>
+                    <FormLabel className="!mt-0 cursor-pointer">{label}{isRequired && <FormRequiredIndicator />}</FormLabel>
+                </div>
+                {formDescription && <FormDescription>{formDescription}</FormDescription>}
+                <FormMessage />
+            </FormItem>
+        )}
+    />
+}

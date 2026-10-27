@@ -1,0 +1,412 @@
+import { fileSrc, sitePath } from "@hooks/useFileSrc"
+import { useMemo, useState } from "react"
+import { Element, Text, domToReact, htmlToDOM, type DOMNode, type HTMLReactParserOptions } from "html-react-parser"
+import { UserMention, ChannelMention } from "./MessageMention"
+import { CodeBlock } from "./MessageCodeBlock"
+import { MessageLink } from "./LinkPreviewCard"
+import { MAYBE_PHONE_RE, splitPhoneRuns } from "@utils/phoneDetection"
+import {
+    splitCustomEmojiShortcodes,
+    useCustomEmojiShortcodes,
+    type CustomEmojiShortcodes,
+} from "@lib/customEmojiShortcodes"
+import { cn } from "@lib/utils"
+import _ from "@lib/translate"
+
+/**
+ * Renders a message body from the HTML the backend stores in `message.text`
+ * (Tiptap's `getHTML()` output). We render HTML directly — NOT through a Tiptap
+ * editor instance. The performance guide's core advice is to never mount an
+ * editor you don't need, and a virtualized stream would otherwise spin up one
+ * ProseMirror instance per row. `html-react-parser` builds React elements, so
+ * `<script>` never executes and inline `on*=` handlers never bind; the only
+ * residual vector is anchor href schemes, which we sanitize below.
+ *
+ * Output is wrapped in `.tiptap` — the SAME class Tiptap puts on its editor
+ * root — so reading and editing share one stylesheet (see styles/rich-text.css).
+ */
+
+/** Schemes safe to keep on an <a href>. Everything else (javascript:, data:) is dropped. */
+const SAFE_HREF = /^(https?:|mailto:|tel:|\/|#)/i
+
+/** Custom-emoji image src: same-origin (relative) or http(s) only — never data:/js:. */
+const SAFE_IMG_SRC = /^(https?:|\/)/i
+
+/** Tags no message needs: they load another document, run script, or reach the whole page.
+ *  Stored HTML is not sanitized server-side, so a sender can put any of them in. */
+const DROPPED_TAGS = new Set(["script", "iframe", "frame", "frameset", "object", "embed", "base", "meta", "link", "style", "form", "svg", "math"])
+
+/** Visible text of a node, minus a leading @/# — the fallback mention label. */
+const mentionLabel = (node: Element): string =>
+    node.children
+        .map((child) => (child as { data?: string }).data ?? "")
+        .join("")
+        .replace(/^[@#]/, "")
+        .trim()
+
+/** Spoiler: hidden behind a block until clicked (keyboard-accessible). */
+const Spoiler = ({ children }: { children: React.ReactNode }) => {
+    const [revealed, setRevealed] = useState(false)
+    return (
+        <span
+            className={cn("message-spoiler", revealed && "message-spoiler--revealed")}
+            role="button"
+            tabIndex={revealed ? -1 : 0}
+            aria-label={revealed ? undefined : _("Spoiler — click to reveal")}
+            onClick={() => !revealed && setRevealed(true)}
+            onKeyDown={(e) => {
+                if (!revealed && (e.key === "Enter" || e.key === " ")) {
+                    e.preventDefault()
+                    setRevealed(true)
+                }
+            }}
+        >
+            {/* The wrapper is what hides (visibility, in rich-text.css): bare text
+                nodes can't be targeted by CSS, and hiding the outer span would
+                take its gray block along. */}
+            <span className="message-spoiler-content">{children}</span>
+        </span>
+    )
+}
+
+/** Recursively concatenate a node's text content (for code-block bodies). */
+const textContent = (node: DOMNode): string => {
+    if ((node as { type?: string }).type === "text") return (node as { data?: string }).data ?? ""
+    if (node instanceof Element) return (node.children as DOMNode[]).map(textContent).join("")
+    return ""
+}
+
+/* --------------------------- Phone detection --------------------------- */
+
+/** Detection logic lives in @utils/phoneDetection (pure + unit-tested); this
+ *  renderer only maps the runs onto anchors. */
+const linkifyPhoneNumbers = (text: string): React.ReactNode[] | null => {
+    const runs = splitPhoneRuns(text)
+    if (!runs) return null
+    return runs.map((run, i) =>
+        run.href ? (
+            <a key={i} href={run.href}>
+                {run.text}
+            </a>
+        ) : (
+            run.text
+        ),
+    )
+}
+
+/** True when the text sits inside a link or code — no tel: links there. */
+const insidePhoneExemptAncestor = (node: Text): boolean => {
+    let parent = node.parent as Element | null
+    while (parent) {
+        const name = (parent as Element).name
+        if (name === "a" || name === "code" || name === "pre") return true
+        parent = (parent as { parent?: Element | null }).parent ?? null
+    }
+    return false
+}
+
+/* ------------------------ Custom emoji shortcodes ------------------------ */
+
+/**
+ * Swap each known `:name:` in the text for the same <img> a picked custom emoji is, so
+ * everything below (sizing, jumbomoji, bubbles) treats the two alike. Not inside code.
+ */
+const swapCustomEmojiShortcodes = (nodes: DOMNode[], shortcodes: CustomEmojiShortcodes | null) => {
+    if (!shortcodes) return
+    for (let i = nodes.length - 1; i >= 0; i--) {
+        const node = nodes[i]
+        if (node instanceof Element) {
+            if (node.name !== "pre" && node.name !== "code") {
+                swapCustomEmojiShortcodes(node.children as DOMNode[], shortcodes)
+            }
+            continue
+        }
+        if (!(node instanceof Text)) continue
+        const parts = splitCustomEmojiShortcodes(node.data, shortcodes)
+        if (!parts) continue
+        const swapped = parts.map((part) => {
+            const child =
+                typeof part === "string"
+                    ? new Text(part)
+                    : new Element("img", { "data-type": "customEmoji", src: part.src, alt: part.shortcode })
+            child.parent = node.parent
+            return child
+        })
+        nodes.splice(i, 1, ...swapped)
+    }
+}
+
+const parseHtml = (html: string, shortcodes: CustomEmojiShortcodes | null): DOMNode[] => {
+    const dom = htmlToDOM(html, { lowerCaseAttributeNames: false })
+    swapCustomEmojiShortcodes(dom, shortcodes)
+    return dom
+}
+
+const options: HTMLReactParserOptions = {
+    replace: (node) => {
+        // Phone numbers in plain text become tel: links, detected at RENDER
+        // time — old messages and other clients' sends get them too, and
+        // nothing changes in stored content. Never inside an existing link or
+        // code. Jumbomoji is unaffected (digits already disqualify it).
+        if (node instanceof Text) {
+            if (!node.data || !MAYBE_PHONE_RE.test(node.data)) return
+            if (insidePhoneExemptAncestor(node)) return
+            const parts = linkifyPhoneNumbers(node.data)
+            return parts ? <>{parts}</> : undefined
+        }
+
+        if (!(node instanceof Element)) return
+
+        if (DROPPED_TAGS.has(node.name)) return <></>
+
+        // Strip author classes. v2 Raven baked presentational utilities (e.g.
+        // `text-sm`) into the stored HTML; because those classes also exist in
+        // THIS app's compiled CSS, they apply and fight the .tiptap stylesheet
+        // (old messages at 13px, new ones at 14px). The stylesheet is the single
+        // source of truth for presentation, so legacy classes are dropped here.
+        // `data-*` (mentions, emoji) and inline `style` (text-align) are kept.
+        // The one class we DO need — a code block's `language-*` — is read in the
+        // <pre> branch below, which runs on the parent before this strips a child.
+        if (node.attribs?.class) delete node.attribs.class
+
+        // Mentions: swap the stored span for an interactive component that
+        // resolves the live name, flags self-mentions, and links channels.
+        const mentionType = node.attribs?.["data-type"]
+        const mentionID = node.attribs?.["data-id"]
+        if (mentionID && (mentionType === "userMention" || mentionType === "channelMention")) {
+            const fallback = mentionLabel(node)
+            return mentionType === "userMention" ? (
+                <UserMention id={mentionID} fallback={fallback} />
+            ) : (
+                <ChannelMention id={mentionID} fallback={fallback} />
+            )
+        }
+
+        // Spoiler: swap the stored span for a click-to-reveal component (data-spoiler
+        // survives the class-strip above, like mentions' data-*).
+        if (node.name === "span" && node.attribs?.["data-spoiler"] !== undefined) {
+            return <Spoiler>{domToReact(node.children as DOMNode[], options)}</Spoiler>
+        }
+
+        // The inline "(edited)" marker, injected into the final paragraph by
+        // EditedMessageBody. A data-* marker for the same reason as spoilers:
+        // classes don't survive the strip above.
+        if (node.name === "span" && node.attribs?.["data-edited"] !== undefined) {
+            return <span className="ml-1 text-sm text-ink-gray-5">{domToReact(node.children as DOMNode[], options)}</span>
+        }
+
+        // Custom emoji: an inline <img data-type="customEmoji">. Render it sized like an
+        // emoji (the author class is stripped above), src-sanitized to a safe scheme.
+        if (node.name === "img" && node.attribs?.["data-type"] === "customEmoji") {
+            // Checked after unwrapping: an address the app saved carries the real one inside.
+            const src = sitePath((node.attribs.src ?? "").trim())
+            if (!SAFE_IMG_SRC.test(src)) return <></>
+            const alt = node.attribs.alt ?? ""
+            // `emoji` class → sized by `.tiptap .emoji` (same rule as the composer),
+            // which beats `.tiptap img` on specificity. Consistent inline emoji size.
+            return <img src={fileSrc(src)} alt={alt} title={alt} loading="lazy" className="emoji" />
+        }
+
+        // Code blocks: <pre><code class="language-xxx">…</code></pre>. Returning
+        // an element stops recursion into the children, so the <code>'s class
+        // survives the strip above — read the language + raw text here and hand
+        // off to CodeBlock (highlighting + copy).
+        if (node.name === "pre") {
+            const codeEl = node.children.find(
+                (child): child is Element => child instanceof Element && child.name === "code",
+            )
+            const language = (codeEl?.attribs?.class ?? "").match(/language-(\S+)/)?.[1]
+            const code = textContent(codeEl ?? node).replace(/\n$/, "")
+            return <CodeBlock code={code} language={language} />
+        }
+
+        // Tables: getHTML() emits a bare <table> (no wrapper). Wrap it in the same
+        // `.tableWrapper` the editor's TableKit adds, so the shared stylesheet frames it
+        // and scrolls wide tables horizontally instead of stretching the message row.
+        if (node.name === "table") {
+            return (
+                <div className="tableWrapper">
+                    <table>{domToReact(node.children as DOMNode[], options)}</table>
+                </div>
+            )
+        }
+
+        // Sanitize links: safe scheme only, always open in a new tab.
+        // MessageLink renders the same anchor, plus the floating preview
+        // when the user chose "Link Hover" mode.
+        if (node.name === "a") {
+            const href = (node.attribs?.href ?? "").trim()
+            return (
+                <MessageLink href={SAFE_HREF.test(href) ? href : undefined}>
+                    {domToReact(node.children as DOMNode[], options)}
+                </MessageLink>
+            )
+        }
+    },
+}
+
+/* ------------------------------ Jumbomoji ------------------------------ */
+
+const JUMBOMOJI_MAX = 4
+
+/** A jumbo candidate is short by construction — skip the walk for real messages. */
+const JUMBOMOJI_HTML_MAX_LENGTH = 800
+
+/**
+ * Keycap sequences (1️⃣ #️⃣) — their base [0-9#*] chars carry Emoji_Component,
+ * so strip whole keycaps first; any digit/#/* left after that is real text.
+ */
+const KEYCAP_RE = /[0-9#*]\uFE0F?\u20E3/gu
+
+/** Everything an emoji sequence may contain: pictographic bases + components
+ * (skin tones, regional indicators, keycaps) + ZWJ + VS16 + whitespace. */
+const EMOJI_ONLY_RE = /^[\p{Extended_Pictographic}\p{Emoji_Component}\u200D\uFE0F\s]*$/u
+
+// Not in the tsconfig lib yet — minimal local shape (Safari 14.1+/Chrome 87+ at runtime).
+type GraphemeSegmenter = { segment: (input: string) => Iterable<unknown> }
+type GraphemeSegmenterCtor = new (locale?: string, options?: { granularity: "grapheme" }) => GraphemeSegmenter
+
+const SegmenterCtor = (Intl as unknown as { Segmenter?: GraphemeSegmenterCtor }).Segmenter
+const GRAPHEME_SEGMENTER = SegmenterCtor ? new SegmenterCtor(undefined, { granularity: "grapheme" }) : null
+
+/** Emoji count of a text run, or null if it contains anything that isn't emoji/whitespace. */
+const countEmojiGraphemes = (raw: string): number | null => {
+    const text = raw.replace(/\s+/g, "")
+    if (!text) return 0
+    const withoutKeycaps = text.replace(KEYCAP_RE, "")
+    if (/[0-9#*]/.test(withoutKeycaps)) return null
+    if (!EMOJI_ONLY_RE.test(withoutKeycaps)) return null
+    if (GRAPHEME_SEGMENTER) {
+        let count = 0
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+        for (const _segment of GRAPHEME_SEGMENTER.segment(text)) count++
+        return count
+    }
+    // No Segmenter (old WebKit): code points over-count ZWJ sequences, which can
+    // only FAIL the ≤ max gate — messages render normal-sized, never wrongly huge.
+    return Array.from(text).length
+}
+
+/**
+ * True when the message is ONLY emojis — 1 to 4 of them, native and/or custom —
+ * so the stream can render them big (Slack/iMessage-style). Structure must be a
+ * single <p> whose children are emoji text runs and customEmoji <img>s; anything
+ * else (marks, mentions, links, more blocks) disqualifies.
+ */
+const isJumbomoji = (html: string, dom: DOMNode[]): boolean => {
+    if (html.length > JUMBOMOJI_HTML_MAX_LENGTH) return false
+    const blocks = dom.filter((node) => !(node instanceof Text && !node.data.trim()))
+    if (blocks.length !== 1) return false
+    const paragraph = blocks[0]
+    if (!(paragraph instanceof Element) || paragraph.name !== "p") return false
+
+    let count = 0
+    for (const child of paragraph.children as DOMNode[]) {
+        if (child instanceof Text) {
+            const n = countEmojiGraphemes(child.data)
+            if (n === null) return false
+            count += n
+        } else if (child instanceof Element && child.name === "img" && child.attribs?.["data-type"] === "customEmoji") {
+            count += 1
+        } else {
+            return false
+        }
+    }
+    return count >= 1 && count <= JUMBOMOJI_MAX
+}
+
+/**
+ * Parse-and-check for callers outside the renderer. The inline "(edited)"
+ * marker must NOT be injected into a jumbomoji paragraph — the added text
+ * would fail the emoji-only walk above and shrink the emojis. The length
+ * gate skips the parse for anything that can't be jumbomoji anyway.
+ */
+export const isJumbomojiHtml = (html: string, shortcodes: CustomEmojiShortcodes | null = null): boolean =>
+    html.length <= JUMBOMOJI_HTML_MAX_LENGTH && isJumbomoji(html, parseHtml(html, shortcodes))
+
+/* ---------------------------- Body segments ---------------------------- */
+
+/**
+ * One piece of a message body, for the Left-Right layout.
+ * Text pieces go inside a bubble. Standalone pieces (code blocks, a GIF on
+ * its own line, emoji-only messages) render bare, iMessage style.
+ */
+export type BodySegment = {
+    standalone: boolean
+    /** Emoji-only message — rendered big and bare. */
+    jumbo: boolean
+    node: React.ReactNode
+}
+
+/**
+ * A block that should NOT live inside a text bubble:
+ * - a code block (<pre>)
+ * - a paragraph that holds only one image (a GIF). Custom emojis don't
+ *   count — they are inline text.
+ */
+const isStandaloneBlock = (node: DOMNode): boolean => {
+    if (!(node instanceof Element)) return false
+    if (node.name === "pre") return true
+    if (node.name === "p") {
+        const children = (node.children as DOMNode[]).filter(
+            (child) => !(child instanceof Text && !child.data.trim()),
+        )
+        const only = children.length === 1 ? children[0] : null
+        return (
+            only instanceof Element &&
+            only.name === "img" &&
+            only.attribs?.["data-type"] !== "customEmoji"
+        )
+    }
+    return false
+}
+
+/**
+ * Split a message body into segments for the Left-Right layout.
+ * Consecutive text blocks group into one segment (one bubble). Standalone
+ * blocks break the run and come back as their own bare segment. An
+ * emoji-only message is one bare jumbo segment.
+ */
+export const parseBodySegments = (html: string, shortcodes: CustomEmojiShortcodes | null = null): BodySegment[] => {
+    const dom = parseHtml(html, shortcodes)
+    if (isJumbomoji(html, dom)) {
+        return [{ standalone: true, jumbo: true, node: domToReact(dom, options) }]
+    }
+
+    const segments: BodySegment[] = []
+    let run: DOMNode[] = []
+    const flushRun = () => {
+        if (run.length === 0) return
+        segments.push({ standalone: false, jumbo: false, node: domToReact(run, options) })
+        run = []
+    }
+
+    for (const node of dom) {
+        // Whitespace between blocks belongs to no segment.
+        if (node instanceof Text && !node.data.trim()) continue
+        if (isStandaloneBlock(node)) {
+            flushRun()
+            segments.push({ standalone: true, jumbo: false, node: domToReact([node], options) })
+        } else {
+            run.push(node)
+        }
+    }
+    flushRun()
+    return segments
+}
+
+export const RichTextRenderer = ({ html, jumbomoji = false }: { html: string; jumbomoji?: boolean }) => {
+    const shortcodes = useCustomEmojiShortcodes(html)
+    const { tree, jumbo } = useMemo(() => {
+        // Same two steps parse() runs internally, split so ONE parsed DOM feeds
+        // both the React conversion and the jumbomoji check (no second parse).
+        const dom = parseHtml(html, shortcodes)
+        return {
+            tree: domToReact(dom, options),
+            jumbo: jumbomoji && isJumbomoji(html, dom),
+        }
+    }, [html, jumbomoji, shortcodes])
+    return <div className={cn("tiptap", jumbo && "tiptap--jumbomoji")}>{tree}</div>
+}
+
+export default RichTextRenderer

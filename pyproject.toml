@@ -1,7 +1,7 @@
 [project]
 name = "raven"
 authors = [
-    { name = "The Commit Company", email = "support@thecommit.company"}
+    { name = "Frappe", email = "support@frappe.io"}
 ]
 description = "Simple, open source messaging tool"
 requires-python = ">=3.10"
@@ -9,9 +9,9 @@ readme = "README.md"
 dynamic = ["version"]
 dependencies = [
  "linkpreview~=0.9.0",
- "openai>=1.100.2",
+ "openai>=2.30.0",
  "blurhash-python",
- "openai-agents>=0.0.16",
+ "openai-agents>=0.17.2",
  "markitdown",
  "pandas",
  "google-cloud-documentai"
@@ -32,3 +32,16 @@ force_grid_wrap = 0
 use_parentheses = true
 ensure_newline_before_comments = true
 indent = "\t"
+
+[tool.bench.frappe-dependencies]
+frappe = ">=15.111.0,<=17.0.0-dev"
+
+[tool.bench.assets]
+build_dir = "./apps/web"
+out_dir = "../../raven/public/raven"
+index_html_path = "../../raven/www/raven.html"
+
+[project.urls]
+Homepage = "https://frappe.io/products/raven"
+Repository = "https://github.com/frappe/raven.git"
+"Bug Reports" = "https://github.com/frappe/raven/issues"
