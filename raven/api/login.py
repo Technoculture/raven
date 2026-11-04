@@ -9,7 +9,8 @@ from frappe.utils.password import get_decrypted_password
 no_cache = True
 
 
-@frappe.whitelist(allow_guest=True)
+# Public login discovery returns provider URLs and login settings, never client secrets.
+@frappe.whitelist(allow_guest=True)  # nosemgrep: guest-whitelisted-method
 def get_context():
 
 	redirect_to = frappe.local.request.args.get("redirect-to")
@@ -59,5 +60,6 @@ def get_context():
 	context["login_with_email_link"] = frappe.get_system_settings("login_with_email_link")
 	context["two_factor_is_enabled"] = two_factor_is_enabled()
 	context["disable_signup"] = frappe.get_website_settings("disable_signup")
+	context["disable_user_pass_login"] = frappe.get_system_settings("disable_user_pass_login")
 
 	return context

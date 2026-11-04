@@ -7,8 +7,24 @@ import frappe
 from frappe import _
 from frappe.core.doctype.file.utils import get_local_image
 from frappe.handler import upload_file
+from frappe.utils import cint
 from frappe.utils.image import optimize_image
 from PIL import Image, ImageOps
+
+DEFAULT_RAVEN_UPLOAD_LIMIT_BYTES = 25 * 1024 * 1024
+
+
+@frappe.whitelist()
+def get_upload_file_limit():
+	"""
+	Return the effective size limit for Raven's custom upload route.
+	"""
+	from frappe.core.api.file import get_max_file_size
+
+	request_limit = cint(frappe.local.conf.get("max_file_size")) or DEFAULT_RAVEN_UPLOAD_LIMIT_BYTES
+	file_doc_limit = get_max_file_size()
+
+	return min(request_limit, file_doc_limit)
 
 
 def upload_JPEG_wrt_EXIF(content, filename, optimize=False):
@@ -172,6 +188,14 @@ def upload_file_with_message():
 		# message_doc.file_thumbnail = thumbnail_url
 		message_doc.thumbnail_width = thumbnail_width
 		message_doc.thumbnail_height = thumbnail_height
+
+	# TODO (video dimensions): for video uploads, probe width/height here
+	# (e.g. ffprobe / moviepy) and store them on image_width/image_height the
+	# same way images do above. The web client (MessageVideo) already reserves
+	# a box from stored dimensions when present — without them it auto-sizes and
+	# reflows once when metadata loads, which can shift scroll position for a
+	# video above the viewport during older-message pagination. Storing dims
+	# makes inline video height deterministic (and correct for portrait clips).
 
 	message_doc.save()
 

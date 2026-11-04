@@ -24,35 +24,52 @@ def are_push_notifications_enabled() -> bool:
 		return False
 
 
+@frappe.whitelist(methods=["GET"])
+def get_push_notification_config() -> dict:
+	"""Return the public browser configuration after background registration finishes."""
+	settings = frappe.get_single("Raven Settings")
+	if settings.push_notification_service != "Raven":
+		return {}
+	return {"firebase_client_config": settings.config, "vapid_public_key": settings.vapid_public_key}
+
+
 @frappe.whitelist(methods=["POST"])
 def register_site_on_raven_cloud() -> None:
 	"""
 	Register the site on Raven Cloud
 	"""
+	from raven.frappe_cloud_push import is_on_frappe_cloud_push, setup_push
+	from raven.utils import make_api_call
+
 	frappe.only_for("System Manager")
 	raven_settings = frappe.get_single("Raven Settings")
 
+	# On Frappe Cloud, register with a new team token, which also fixes missing or refused keys.
+	if is_on_frappe_cloud_push(raven_settings):
+		setup_push()
+		return
+
 	if raven_settings.push_notification_service == "Raven":
 
-		client = FrappeClient(
-			url=raven_settings.push_notification_server_url,
+		url = f"{raven_settings.push_notification_server_url}/api/method/raven_cloud.api.notification.register_site"
+
+		response = make_api_call(
+			url=url,
 			api_key=raven_settings.push_notification_api_key,
 			api_secret=raven_settings.get_password("push_notification_api_secret"),
+			method="POST",
+			params={"site_name": urlparse(frappe.utils.get_url(allow_header_override=False)).hostname},
 		)
+		message = response.get("message")
 
-		response = client.post_api(
-			"raven_cloud.api.notification.register_site",
-			params={"site_name": urlparse(frappe.utils.get_url()).hostname},
-		)
-
-		raven_settings.config = response.get("config")
-		raven_settings.vapid_public_key = response.get("vapid_public_key")
+		raven_settings.config = message.get("config")
+		raven_settings.vapid_public_key = message.get("vapid_public_key")
 		raven_settings.save()
 	else:
 		frappe.throw(_("Push notification service is not set to Raven Cloud."))
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def sync_user_tokens_to_raven_cloud():
 	"""
 	Sync all the tokens available on this site to Raven Cloud
@@ -104,6 +121,14 @@ def unsubscribe(fcm_token: str) -> None:
 	Remove the FCM token from the database
 	"""
 
-	frappe.db.delete("Raven Push Token", {"fcm_token": fcm_token, "user": frappe.session.user})
+	# Check if the FCM token exists
+	token_name = frappe.db.exists(
+		"Raven Push Token", {"fcm_token": fcm_token, "user": frappe.session.user}
+	)
+	if not token_name:
+		frappe.throw(_("FCM token not found"))
+
+	# Delete the FCM token from the database using delete_doc to ensure that on_trash method gets called to delete the token from RC/FCP.
+	frappe.delete_doc("Raven Push Token", token_name, delete_permanently=True)
 
 	return "Unsubscribed"

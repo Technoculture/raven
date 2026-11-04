@@ -16,6 +16,8 @@ export interface RavenChannel {
 	channel_description?: string
 	/**	Type : Select	*/
 	type: "Private" | "Public" | "Open"
+	/** Members Can Only View Own Messages : Check */
+	members_can_only_view_own_messages?: 0 | 1
 	/**	Is Synced : Check	*/
 	is_synced?: 0 | 1
 	/**	Linked DocType : Link - DocType	*/

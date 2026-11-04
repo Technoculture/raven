@@ -38,7 +38,7 @@ jobs:
 
       - name: Set Branch
         run: |
-          export APPS_JSON='[{"url": "https://github.com/The-Commit-Company/raven","branch": "main"}]'
+          export APPS_JSON='[{"url": "https://github.com/frappe/raven","branch": "main"}]'
           echo "APPS_JSON_BASE64=$(echo $APPS_JSON | base64 -w 0)" >> $GITHUB_ENV
           echo "FRAPPE_BRANCH=version-15" >> $GITHUB_ENV
 
@@ -57,8 +57,8 @@ jobs:
           context: builds
           file: builds/images/layered/Containerfile
           tags: >
-            ghcr.io/${{ github.repository }}:${{ github.ref_name }},
-            ghcr.io/${{ github.repository }}:${{ env.IMAGE_TAG }}
+            ghcr.io/frappe/raven:${{ github.ref_name }},
+            ghcr.io/frappe/raven:${{ env.IMAGE_TAG }}
           build-args: |
             "FRAPPE_BRANCH=${{ env.FRAPPE_BRANCH }}"
             "APPS_JSON_BASE64=${{ env.APPS_JSON_BASE64 }}"

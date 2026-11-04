@@ -1,9 +1,11 @@
-# Copyright (c) 2023, The Commit Company and contributors
+# Copyright (c) 2026, Frappe Technologies Pvt. Ltd. and contributors
 # For license information, please see license.txt
 
 import frappe
 from frappe import _
 from frappe.model.document import Document
+from frappe.sessions import clear_sessions
+from frappe.utils.data import get_url
 
 
 class RavenUser(Document):
@@ -15,17 +17,38 @@ class RavenUser(Document):
 	if TYPE_CHECKING:
 		from frappe.types import DF
 
+		from raven.raven.doctype.raven_grouped_channels.raven_grouped_channels import (
+			RavenGroupedChannels,
+		)
 		from raven.raven.doctype.raven_pinned_channels.raven_pinned_channels import RavenPinnedChannels
+		from raven.raven.doctype.raven_user_pinned_workspaces.raven_user_pinned_workspaces import (
+			RavenUserPinnedWorkspaces,
+		)
+		from raven.raven_channel_management.doctype.raven_channel_groups.raven_channel_groups import (
+			RavenChannelGroups,
+		)
 
 		availability_status: DF.Literal["", "Available", "Away", "Do not disturb", "Invisible"]
 		bot: DF.Link | None
+		channel_groups: DF.Table[RavenChannelGroups]
 		chat_style: DF.Literal["Simple", "Left-Right"]
+		contact_number: DF.Data | None
 		custom_status: DF.Data | None
 		enabled: DF.Check
+		filter_joined_channels: DF.Check
+		filter_recent_activity: DF.Check
 		first_name: DF.Data | None
 		full_name: DF.Data
+		grouped_channels: DF.Table[RavenGroupedChannels]
+		hide_read_receipts: DF.Check
 		last_mention_viewed_on: DF.Datetime | None
+		link_previews: DF.Literal["Link Hover", "Preview Card"]
+		onboarded: DF.Check
 		pinned_channels: DF.Table[RavenPinnedChannels]
+		pinned_workspaces: DF.Table[RavenUserPinnedWorkspaces]
+		quiet_hours_nudge: DF.Literal["No Nudge", "Nudge", "Auto Silent"]
+		sort_channels_by: DF.Literal["Alphabetical Order", "Recent Activity", "Unreads First"]
+		time_format: DF.Literal["12-hour", "24-hour"]
 		type: DF.Literal["User", "Bot"]
 		user: DF.Link | None
 		user_image: DF.AttachImage | None
@@ -42,6 +65,17 @@ class RavenUser(Document):
 			self.type = "User"
 		if not self.full_name:
 			self.full_name = self.first_name
+		# A profile rename writes only `full_name`; `first_name` is otherwise
+		# seeded from the linked User (fetch_if_empty) and would stay stale
+		# forever — short displays like the typing indicator read it. Re-derive
+		# it whenever the full name changes, unless this save also set
+		# `first_name` explicitly (an explicit edit wins).
+		if (
+			self.full_name
+			and self.has_value_changed("full_name")
+			and not self.has_value_changed("first_name")
+		):
+			self.first_name = self.full_name.split(" ")[0]
 
 	def validate(self):
 		if self.type == "Bot" and not self.bot:
@@ -49,6 +83,29 @@ class RavenUser(Document):
 
 		if self.type == "User" and not self.user:
 			frappe.throw(_("User is mandatory"))
+
+		self.validate_channel_group_names()
+
+	def validate_channel_group_names(self):
+		"""
+		Group names must be unique per user — grouped_channels references a group
+		by name, so duplicates within one user would corrupt channel assignment.
+		Enforced here because the DB cannot express "unique per parent".
+
+		"Favorites" is reserved: the sidebar renders it as a pseudo-group backed by
+		pinned_channels, not a channel_groups row. A real group with that name would
+		collide with it — clients route "Favorites" assignments to the pin list, so
+		the group could never receive a channel, and empty groups are not rendered.
+		The web client refuses the name; this covers API and older-client writers.
+		"""
+		seen = set()
+		for group in self.channel_groups or []:
+			name = (group.group_name or "").strip().casefold()
+			if name == "favorites":
+				frappe.throw(_("Group name {0} is reserved.").format(frappe.bold(group.group_name)))
+			if name in seen:
+				frappe.throw(_("Group name {0} is already used.").format(frappe.bold(group.group_name)))
+			seen.add(name)
 
 	def before_insert(self):
 		if self.type != "Bot":
@@ -58,24 +115,52 @@ class RavenUser(Document):
 		self.invalidate_user_list_cache()
 
 	def on_update(self):
+		if self.type == "User" and self.user and not self.enabled:
+			if not frappe.db.get_value("User", self.user, "enabled"):
+				revoke_disabled_user_access(self.user)
+			else:
+				delete_raven_push_tokens(self.user)
+
 		self.invalidate_user_list_cache()
+		self.clear_membership_caches()
 
 	def on_trash(self):
 		"""
 		Remove the Raven User from all channels
 		"""
-		frappe.db.delete("Raven Channel Member", {"user_id": self.user})
+		# Delete all non-admin channel memberships.
+		frappe.db.delete("Raven Channel Member", {"user_id": self.user, "is_admin": 0})
+
+		# Admin channel memberships need to be deleted manually since admins will be transferred
+		channel_members = frappe.get_all(
+			"Raven Channel Member", filters={"user_id": self.user, "is_admin": 1}
+		)
+		for channel_member in channel_members:
+			frappe.delete_doc("Raven Channel Member", channel_member.name, ignore_permissions=True)
+		# Workspace memberships link this doc; left behind they block the delete.
+		workspace_members = frappe.get_all("Raven Workspace Member", filters={"user": self.name})
+		for workspace_member in workspace_members:
+			frappe.delete_doc("Raven Workspace Member", workspace_member.name, ignore_permissions=True)
+		# Raven Reminder.user links this doc by name (not the frappe user id)
+		frappe.db.delete("Raven Reminder", {"user": self.name})
+		# Scheduled messages are owned by the frappe user. Left behind, the sweep would
+		# try to send them as a user who no longer exists on every run. Bots have no user.
+		if self.user:
+			frappe.db.delete("Raven Scheduled Message", {"owner": self.user})
 
 	def after_delete(self):
 		"""
 		Remove the Raven User role from the user.
+
+		The role row is deleted directly rather than through a User save. A save
+		here runs every app's on_update hooks on the User, and when the User
+		itself is being deleted that let other apps recreate records mid-delete
+		and fail the deletion. When the User is being deleted its role rows go
+		with it, so there is nothing to do.
 		"""
-		if self.user:
-			user = frappe.get_doc("User", self.user)
-			user.flags.ignore_permissions = True
-			user.flags.deleting_raven_user = True
-			user.remove_roles("Raven User")
-			user.save()
+		if self.user and not self.flags.user_being_deleted:
+			frappe.db.delete("Has Role", {"parent": self.user, "parenttype": "User", "role": "Raven User"})
+			frappe.clear_cache(user=self.user)
 
 		self.invalidate_user_list_cache()
 
@@ -85,25 +170,89 @@ class RavenUser(Document):
 
 		get_users.clear_cache()
 
+	def clear_membership_caches(self):
+		if self.type != "User" or not self.user:
+			return
+
+		clear_membership_caches_for_user(self.user)
+
 	def update_photo_from_user(self):
 		"""
-		We need to create a new File record for the user image and attach it to the Raven User record.
-		Why not just copy the URL from the User record? Because the URL is not accessible to the Raven User,
-		and Frappe creates a duplicate file in the system (that is public) but does not update the URL in the field.
+		A public photo on the User is used as it is: everyone can load it. A private one is only
+		readable by those who can read the User, so a copy is attached to the Raven User instead,
+		which every Raven user can read. Frappe makes that copy by fetching the file's full URL.
 		"""
 		user_image = frappe.db.get_value("User", self.user, "user_image")
-		if user_image and not self.user_image:
-			image_file = frappe.get_doc(
-				{
-					"doctype": "File",
-					"file_url": user_image,
-					"attached_to_doctype": "Raven User",
-					"attached_to_name": self.user,
-					"attached_to_field": "user_image",
-					"is_private": 1,
-				}
-			).insert(ignore_permissions=True)
-			self.user_image = image_file.file_url
+		if self.user_image or not isinstance(user_image, str):
+			return
+
+		if user_image.startswith("/files/"):
+			self.user_image = user_image
+			return
+
+		if user_image.startswith("/"):
+			user_image = get_url(user_image)
+
+		try:
+			if user_image and not self.user_image:
+				image_file = frappe.get_doc(
+					{
+						"doctype": "File",
+						"file_url": user_image,
+						"attached_to_doctype": "Raven User",
+						"attached_to_name": self.user,
+						"attached_to_field": "user_image",
+						"is_private": 1,
+					}
+				).insert(ignore_permissions=True)
+				self.user_image = image_file.file_url
+		except Exception:
+			pass
+
+
+def revoke_disabled_user_access(user: str):
+	"""
+	Revoke interactive, OAuth, and Raven push access for a disabled user.
+	"""
+	if not user or user in ("Guest", "Administrator"):
+		return
+
+	clear_sessions(user=user, force=True)
+	revoke_oauth_tokens(user)
+	delete_raven_push_tokens(user)
+	frappe.clear_cache(user=user)
+
+
+def revoke_oauth_tokens(user: str):
+	frappe.db.set_value(
+		"OAuth Bearer Token",
+		{"user": user, "status": "Active"},
+		"status",
+		"Revoked",
+		update_modified=False,
+	)
+
+
+def delete_raven_push_tokens(user: str):
+	token_names = frappe.get_all("Raven Push Token", filters={"user": user}, pluck="name")
+
+	for token_name in token_names:
+		frappe.delete_doc("Raven Push Token", token_name, ignore_permissions=True, force=True)
+
+
+def clear_membership_caches_for_user(user: str):
+	channel_ids = frappe.get_all(
+		"Raven Channel Member", filters={"user_id": user}, pluck="channel_id"
+	)
+	workspace_ids = frappe.get_all(
+		"Raven Workspace Member", filters={"user": user}, pluck="workspace"
+	)
+
+	for channel_id in channel_ids:
+		frappe.cache().delete_value(f"raven:channel_members:{channel_id}")
+
+	for workspace_id in workspace_ids:
+		frappe.cache().delete_value(f"raven:workspace_members:{workspace_id}")
 
 
 def add_user_to_raven(doc, method):
@@ -112,45 +261,59 @@ def add_user_to_raven(doc, method):
 	# Else, check if the user has a Raven User role. If yes, then create a Raven User record for the user if not already created.
 
 	# If the user is already added to Raven, do nothing.
-	if not doc.flags.deleting_raven_user:
-		if frappe.db.exists("Raven User", {"user": doc.name}):
-			# Check if the role is still present. If not, then inactivate the Raven User record.
-			has_raven_role = False
-			for role in doc.get("roles"):
-				if role.role == "Raven User":
-					has_raven_role = True
-					break
+	if frappe.db.exists("Raven User", {"user": doc.name}):
+		# Check if the role is still present. If not, then inactivate the Raven User record.
+		has_raven_role = False
+		for role in doc.get("roles"):
+			if role.role == "Raven User":
+				has_raven_role = True
+				break
 
-			if has_raven_role:
-				raven_user = frappe.get_doc("Raven User", {"user": doc.name})
+		if has_raven_role:
+			raven_user = frappe.get_doc("Raven User", {"user": doc.name})
+			if not raven_user.full_name:
 				raven_user.full_name = doc.full_name or doc.first_name
+
+			if not raven_user.first_name:
 				raven_user.first_name = doc.first_name
-				raven_user.enabled = doc.enabled
-				raven_user.save(ignore_permissions=True)
-			else:
-				raven_user = frappe.get_doc("Raven User", {"user": doc.name})
-				raven_user.full_name = doc.full_name or doc.first_name
-				raven_user.first_name = doc.first_name
-				raven_user.enabled = 0
-				raven_user.save(ignore_permissions=True)
+			raven_user.enabled = doc.enabled
+			raven_user.save(ignore_permissions=True)
+			if not doc.enabled:
+				revoke_disabled_user_access(doc.name)
+			elif not has_raven_role:
+				delete_raven_push_tokens(doc.name)
 		else:
-			# Raven user does not exist.
-			# Only create raven user if it exists in the system.
-			if frappe.db.exists("User", doc.name):
-				# Check if the user is a system user.
-				auto_add = False
-				if doc.user_type == "System User":
-					auto_add = frappe.db.get_single_value("Raven Settings", "auto_add_system_users")
+			raven_user = frappe.get_doc("Raven User", {"user": doc.name})
+			if not raven_user.full_name:
+				raven_user.full_name = doc.full_name or doc.first_name
 
-				if auto_add or "Raven User" in [d.role for d in doc.get("roles")]:
-					doc.append("roles", {"role": "Raven User"})
-					# Create a Raven User record for the user.
-					raven_user = frappe.new_doc("Raven User")
-					raven_user.user = doc.name
-					raven_user.full_name = doc.full_name or doc.first_name
-					raven_user.first_name = doc.first_name
-					raven_user.enabled = doc.enabled
-					raven_user.insert(ignore_permissions=True)
+			if not raven_user.first_name:
+				raven_user.first_name = doc.first_name
+			raven_user.enabled = 0
+			raven_user.save(ignore_permissions=True)
+			if not doc.enabled:
+				revoke_disabled_user_access(doc.name)
+			elif not has_raven_role:
+				delete_raven_push_tokens(doc.name)
+	else:
+		# Raven user does not exist.
+		# Only create raven user if it exists in the system.
+		if frappe.db.exists("User", doc.name):
+			# Check if the user is a system user.
+			auto_add = False
+			if doc.user_type == "System User":
+				auto_add = frappe.db.get_single_value("Raven Settings", "auto_add_system_users")
+
+			if auto_add or "Raven User" in [d.role for d in doc.get("roles")]:
+				doc.append("roles", {"role": "Raven User"})
+				# Create a Raven User record for the user.
+				raven_user = frappe.new_doc("Raven User")
+				raven_user.user = doc.name
+				raven_user.full_name = doc.full_name or doc.first_name
+				raven_user.first_name = doc.first_name
+				raven_user.contact_number = doc.mobile_no
+				raven_user.enabled = doc.enabled
+				raven_user.insert(ignore_permissions=True)
 
 
 def remove_user_from_raven(doc, method):
@@ -158,4 +321,5 @@ def remove_user_from_raven(doc, method):
 	# If the user is deleted, then delete the Raven User record for the user.
 	if frappe.db.exists("Raven User", {"user": doc.name}):
 		raven_user = frappe.get_doc("Raven User", {"user": doc.name})
+		raven_user.flags.user_being_deleted = True
 		raven_user.delete(ignore_permissions=True)

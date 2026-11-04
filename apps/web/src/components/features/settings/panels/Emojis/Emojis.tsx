@@ -1,0 +1,258 @@
+import { siteUrl } from '@lib/site'
+import { useState, useMemo } from 'react'
+import { ListView, type ListViewColumnMeta, type SortingState } from '@components/ui/list-view'
+import type { ColumnDef } from '@tanstack/react-table'
+import { TablePagination } from '@components/ui/table-pagination'
+import { useFetchCustomEmojis } from '@hooks/fetchers/useFetchCustomEmojis'
+import usePaginatedList, { type ListQuery } from '@hooks/usePaginatedList'
+import useCreateHotkey from '@hooks/useCreateHotkey'
+import { useSWRConfig } from 'frappe-react-sdk'
+import { useDebounceValue } from 'usehooks-ts'
+import { Input } from '@components/ui/input'
+import {
+    SettingsPanelContent,
+    SettingsPanelDescription,
+    SettingsPanelHeader,
+    SettingsPanelTitle,
+} from '@components/ui/settings-dialog'
+import { Button } from '@components/ui/button'
+import ErrorBanner from '@components/ui/error-banner'
+import { Spinner } from '@components/ui/spinner'
+import { RavenCustomEmoji } from '@raven/types/RavenMessaging/RavenCustomEmoji'
+import { getDateObject } from '@lib/date'
+import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@components/ui/empty'
+import { SearchIcon, SmilePlus } from 'lucide-react'
+import _ from '@lib/translate'
+import AddCustomEmojiDialog from './AddEmojiDialog'
+import DeleteEmojiDialog from './DeleteEmojiDialog'
+
+const CustomEmojiEmptyState = ({ setOpen }: { setOpen: (open: boolean) => void }) => {
+    return (
+        <Empty>
+            <EmptyMedia>
+                <SmilePlus />
+            </EmptyMedia>
+            <EmptyHeader>
+                <EmptyTitle>{_("Emojis")}</EmptyTitle>
+                <EmptyDescription>
+                    {_("Personalize your chats with custom emojis.")}
+                    <br />
+                    {_("Upload your own or download from")}{" "}
+                    <a href='https://emoji.gg' target='_blank' rel='noreferrer' className='text-ink-blue-link underline'>Emoji.gg</a>.
+                </EmptyDescription>
+            </EmptyHeader>
+            <EmptyContent>
+                {/* Outline: the panel header already owns the primary Upload button. */}
+                <Button size='sm' variant='outline' onClick={() => setOpen(true)}>
+                    {_("Upload")}
+                </Button>
+            </EmptyContent>
+        </Empty>
+    )
+}
+
+export const Emojis = () => {
+    const { mutate: globalMutate } = useSWRConfig()
+
+    const [sorting, setSorting] = useState<SortingState>([])
+    const [open, setOpen] = useState(false)
+    useCreateHotkey(() => setOpen(true))
+
+    // Search runs on the server since the list is paginated there. Debounced so typing
+    // does not fire a request per keystroke.
+    const [search, setSearch] = useState("")
+    const [debouncedSearch] = useDebounceValue(search.trim(), 300)
+    // Match on the name or the keywords. The same query feeds the list and its count.
+    const query = useMemo<ListQuery<RavenCustomEmoji> | undefined>(() => {
+        if (!debouncedSearch) return undefined
+        const like = `%${debouncedSearch}%`
+        return { orFilters: [["emoji_name", "like", like], ["keywords", "like", like]] }
+    }, [debouncedSearch])
+    const pagination = usePaginatedList("custom-emojis-settings", "Raven Custom Emoji", true, query)
+
+    // The server fetch takes a single {field, order}; ListView holds TanStack sorting.
+    const fetchSort = useMemo(() => {
+        const active = sorting[0]
+        return active ? { field: active.id, order: active.desc ? ('desc' as const) : ('asc' as const) } : undefined
+    }, [sorting])
+
+    // Fetch data with current page settings (SDK auto-key: sort + page are both in the params)
+    const { data, isLoading, error, mutate } = useFetchCustomEmojis(
+        fetchSort,
+        { pageIndex: pagination.pageIndex, pageSize: pagination.pageSize, totalCount: 0 },
+        query,
+    )
+
+    const onAddEmoji = (refresh: boolean = false) => {
+        if (refresh) {
+            mutate()
+            pagination.mutateCount()
+            globalMutate('custom-emojis')
+        }
+        setOpen(false)
+    }
+
+    const onDeleteEmoji = () => {
+        mutate()
+        pagination.mutateCount()
+        globalMutate('custom-emojis')
+    }
+
+    // Define columns inside component so we can pass onDeleteEmoji
+    const columns: ColumnDef<RavenCustomEmoji>[] = useMemo(() => [
+        {
+            id: 'name',
+            accessorKey: 'emoji_name',
+            header: _('Name'),
+            meta: {
+                gridWidth: 'minmax(180px,1.5fr)',
+                getTooltipText: (row) => `:${(row as RavenCustomEmoji).emoji_name}:`,
+            } satisfies ListViewColumnMeta,
+            cell: ({ row }) => (
+                <div className='flex items-center gap-2 min-w-0'>
+                    <img
+                        src={siteUrl(row.original.image)}
+                        alt={row.original.emoji_name}
+                        className='w-8 h-8 rounded-md object-contain object-center shrink-0'
+                    />
+                    <span className='font-medium truncate'>:{row.original.emoji_name}:</span>
+                </div>
+            )
+        },
+        {
+            id: 'keywords',
+            accessorKey: 'keywords',
+            header: _('Keywords'),
+            enableSorting: false,
+            meta: { gridWidth: 'minmax(120px,1fr)' } satisfies ListViewColumnMeta,
+            cell: ({ row }) => (
+                <span className='text-ink-gray-4 truncate'>
+                    {row.original.keywords || '—'}
+                </span>
+            )
+        },
+        {
+            id: 'owner',
+            accessorKey: 'owner',
+            header: _('Uploaded By'),
+            enableSorting: false,
+            meta: { gridWidth: 'minmax(140px,1fr)' } satisfies ListViewColumnMeta,
+            cell: ({ row }) => <span className='truncate'>{row.original.owner}</span>,
+        },
+        {
+            id: 'creation',
+            accessorKey: 'creation',
+            header: _('Added'),
+            meta: { gridWidth: 'minmax(120px,1fr)', tabularNums: true } satisfies ListViewColumnMeta,
+            cell: ({ row }) => (
+                <span>{getDateObject(row.original.creation).format("MMM Do, YYYY")}</span>
+            )
+        },
+        {
+            id: 'actions',
+            header: '',
+            size: 50,
+            enableSorting: false,
+            enableResizing: false,
+            meta: { truncate: false, truncateTooltip: false } satisfies ListViewColumnMeta,
+            cell: ({ row }) => (
+                <DeleteEmojiDialog
+                    emojiId={row.original.name}
+                    emojiName={row.original.emoji_name}
+                    onDelete={onDeleteEmoji}
+                />
+            )
+        }
+    ], [onDeleteEmoji])
+
+    return (
+        <>
+            <SettingsPanelHeader
+                actions={
+                    <Button size="sm" onClick={() => setOpen(true)}>
+                        {_("Upload")}
+                    </Button>
+                }
+            >
+                <SettingsPanelTitle>{_("Emojis")}</SettingsPanelTitle>
+                <SettingsPanelDescription>
+                    {_("Add custom emojis to use for your reactions. PNG, SVG and GIFs supported.")}
+                    <br />
+                    {_("Need help finding one? Download from")}{" "}
+                    <a href="https://emoji.gg" target="_blank" rel="noreferrer" className="text-ink-blue-link underline">
+                        Emoji.gg
+                    </a>
+                    .
+                </SettingsPanelDescription>
+            </SettingsPanelHeader>
+            <SettingsPanelContent className="min-h-0 gap-4">
+                {error && <ErrorBanner error={error} />}
+                {/* No emojis at all (not just no matches): show the getting-started state. */}
+                {!debouncedSearch && !isLoading && (data?.length ?? 0) === 0 && pagination.totalCount === 0 ? (
+                    <CustomEmojiEmptyState setOpen={setOpen} />
+                ) : (
+                    <>
+                        <div className="relative">
+                            <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-ink-gray-4" aria-hidden="true" />
+                            <Input
+                                inputSize="sm"
+                                type="search"
+                                className="pl-9"
+                                placeholder={_("Search emojis")}
+                                aria-label={_("Search emojis")}
+                                value={search}
+                                onChange={(e) => {
+                                    setSearch(e.target.value)
+                                    // A new search re-orders the whole set. Start from the first page.
+                                    pagination.onPageChange(0)
+                                }}
+                            />
+                        </div>
+                        {!data ? (
+                            <div className="flex flex-1 items-center justify-center">
+                                <Spinner />
+                            </div>
+                        ) : (
+                            <ListView
+                                className="flex-1 min-h-0"
+                                scrollAreaClassName="flex-1"
+                                maxHeight="100%"
+                                data={data ?? []}
+                                columns={columns}
+                                getRowId={(row) => row.name}
+                                sorting={sorting}
+                                onSortingChange={(updater) => {
+                                    // New sort re-orders the whole set — jump back to the first page.
+                                    setSorting(updater)
+                                    pagination.onPageChange(0)
+                                }}
+                                rowHeight={44}
+                                emptyState={
+                                    <Empty>
+                                        <EmptyMedia>
+                                            <SmilePlus />
+                                        </EmptyMedia>
+                                        <EmptyHeader>
+                                            <EmptyTitle>{_("No emojis found")}</EmptyTitle>
+                                            <EmptyDescription>{_("Try a different search term.")}</EmptyDescription>
+                                        </EmptyHeader>
+                                    </Empty>
+                                }
+                            />
+                        )}
+                        <TablePagination
+                            pageIndex={pagination.pageIndex}
+                            pageSize={pagination.pageSize}
+                            totalCount={pagination.totalCount}
+                            onPageChange={pagination.onPageChange}
+                            onPageSizeChange={pagination.onPageSizeChange}
+                        />
+                    </>
+                )}
+                <AddCustomEmojiDialog open={open} onClose={onAddEmoji} />
+            </SettingsPanelContent>
+        </>
+    )
+}
+
+export default Emojis

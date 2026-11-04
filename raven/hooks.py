@@ -2,28 +2,28 @@ from . import __version__ as app_version
 
 app_name = "raven"
 app_title = "Raven"
-app_publisher = "The Commit Company (Algocode Technologies Pvt. Ltd.)"
+app_publisher = "Frappe"
 app_description = "Messaging Application"
-app_email = "support@thecommit.company"
+app_email = "support@frappe.io"
 app_license = "AGPLv3"
-source_link = "https://github.com/The-Commit-Company/Raven"
-app_logo = "/assets/raven/raven-logo.png"
-app_logo_url = "/assets/raven/raven-logo.png"
+source_link = "https://github.com/frappe/Raven"
+app_logo = "/assets/raven/raven_logo.svg"
+app_logo_url = "/assets/raven/raven_logo.svg"
 
 # Includes in <head>
 # ------------------
 
 # include js, css files in header of desk.html
-app_include_css = "raven.bundle.css"
-# app_include_css = "/assets/raven/css/raven.css"
-# app_include_js = "/assets/raven/js/raven.js"                 ]
 app_include_js = "raven.bundle.js"
+# Raven's own desk icons, e.g. frappe.utils.icon("raven").
+app_include_icons = ["/assets/raven/icons/raven.svg"]
 
 add_to_apps_screen = [
 	{
 		"name": "raven",
-		"logo": "/assets/raven/raven-logo.png",
+		"logo": "/assets/raven/raven_logo.svg",
 		"title": "Raven",
+		"setup_wizard_text": "Welcome to Raven. Let's set up your team's space.",
 		"route": "/raven",
 		"has_permission": "raven.permissions.check_app_permission",
 	}
@@ -89,7 +89,9 @@ extend_bootinfo = "raven.boot.boot_session"
 # ------------
 
 # before_install = "raven.install.before_install"
-after_install = "raven.install.after_install"
+# On Frappe Cloud, set push up on install and at setup, so it works from the first message.
+after_install = ["raven.install.after_install", "raven.frappe_cloud_push.queue_initial_push_setup"]
+setup_wizard_success = "raven.frappe_cloud_push.queue_initial_push_setup"
 # after_sync = ""
 
 # Uninstallation
@@ -172,11 +174,25 @@ scheduler_events = {
 	# "monthly": [
 	# 	"raven.scheduler.monthly"
 	# ],
-	"daily_maintenance": ["raven.scheduler.daily.sync_invalid_tokens"],
+	"daily_maintenance": [
+		"raven.scheduler.daily.sync_invalid_tokens",
+		"raven.raven_cloud_notifications.sync_users_tokens_to_raven_cloud",
+	],
 	"cron": {
-		# run every 5 minutes
-		"*/5 * * * *": ["raven.scheduler.close_expired_polls.close_expired_polls"]
+		# run every 5 minutes. Reminder and scheduled message times are aligned to this
+		# grid in their validate methods, so both fire on time.
+		"*/5 * * * *": [
+			"raven.scheduler.close_expired_polls.close_expired_polls",
+			"raven.scheduler.send_reminders.send_due_reminders",
+			"raven.scheduler.send_scheduled_messages.send_due_messages",
+		],
 	},
+}
+
+# Auto-registered in Log Settings; each doctype's clear_old_logs does the deletion.
+default_log_clearing_doctypes = {
+	"Raven Reminder": 30,
+	"Raven Scheduled Message": 30,
 }
 
 # Testing
@@ -205,7 +221,7 @@ scheduler_events = {
 # Ignore links to specified DocTypes when deleting documents
 # -----------------------------------------------------------
 
-ignore_links_on_delete = ["Raven Message"]
+ignore_links_on_delete = ["Raven Message", "Raven Reminder", "Raven Scheduled Message"]
 
 
 # User Data Protection
@@ -235,16 +251,17 @@ ignore_links_on_delete = ["Raven Message"]
 # Authentication and authorization
 # --------------------------------
 
-# auth_hooks = [
-# "raven.auth.validate"
-# ]
+auth_hooks = ["raven.auth.validate"]
 
 additional_timeline_content = {"*": ["raven.api.raven_message.get_timeline_message_content"]}
 
 website_route_rules = [
 	{"from_route": "/raven/<path:app_path>", "to_route": "raven"},
-	{"from_route": "/raven_mobile/<path:app_path>", "to_route": "raven"},
 ]
+
+# Serves the v3 service worker at /raven/sw.js (in-scope for page control —
+# offline app shell + share target). See raven/page_renderers.py for why.
+page_renderer = ["raven.page_renderers.RavenV3ServiceWorker"]
 
 permission_query_conditions = {
 	"Raven Channel": "raven.permissions.raven_channel_query",
@@ -253,6 +270,7 @@ permission_query_conditions = {
 	"Raven Poll Vote": "raven.permissions.raven_poll_vote_query",
 	"Raven Workspace": "raven.permissions.raven_workspace_query",
 	"Raven Workspace Member": "raven.permissions.raven_workspace_member_query",
+	"Raven Channel Member": "raven.permissions.raven_channel_member_query",
 }
 
 has_permission = {
@@ -267,9 +285,15 @@ has_permission = {
 }
 
 on_session_creation = "raven.api.user_availability.set_user_active"
+
+# The bundled native app runs from its own origins; allow them on API calls without site config.
+before_request = ["raven.api.native.set_cors"]
+# Frappe 15 ignores the origin set_cors chooses, so Raven writes the CORS headers there itself.
+after_request = ["raven.api.native.add_cors_headers"]
 on_logout = "raven.api.user_availability.set_user_inactive"
 
 export_python_type_annotations = True
+require_type_annotated_api_methods = True
 
 raven_document_link_override = "raven.api.document_link.get_new_app_document_links"
 
@@ -277,3 +301,5 @@ raven_document_link_override = "raven.api.document_link.get_new_app_document_lin
 # ------------
 # List of apps whose translatable strings should be excluded from this app's translations.
 ignore_translatable_strings_from = ["frappe"]
+
+sqlite_search = ["raven.api.search.RavenSearch"]

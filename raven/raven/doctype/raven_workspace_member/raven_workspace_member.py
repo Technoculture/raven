@@ -1,4 +1,4 @@
-# Copyright (c) 2024, The Commit Company (Algocode Technologies Pvt. Ltd.) and contributors
+# Copyright (c) 2026, Frappe Technologies Pvt. Ltd. and contributors
 # For license information, please see license.txt
 
 import frappe
@@ -95,7 +95,15 @@ class RavenWorkspaceMember(Document):
 
 def on_doctype_update():
 	"""
-	Add indexes to Raven Workspace Member table
+	A user can be a member of a workspace only once. The unique constraint also serves as
+	the index on these two columns, so the plain index from before is dropped.
 	"""
-	# Index the selector first for faster queries (less rows to sort in the next step)
-	frappe.db.add_index("Raven Workspace Member", ["workspace", "user"])
+	frappe.db.add_unique(
+		"Raven Workspace Member",
+		fields=["workspace", "user"],
+		constraint_name="unique_workspace_member",
+	)
+	if frappe.db.sql(
+		"show index from `tabRaven Workspace Member` where Key_name = 'workspace_user_index'"
+	):
+		frappe.db.sql_ddl("alter table `tabRaven Workspace Member` drop index `workspace_user_index`")

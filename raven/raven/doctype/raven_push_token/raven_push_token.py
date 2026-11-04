@@ -1,4 +1,4 @@
-# Copyright (c) 2025, The Commit Company (Algocode Technologies Pvt. Ltd.) and contributors
+# Copyright (c) 2026, Frappe Technologies Pvt. Ltd. and contributors
 # For license information, please see license.txt
 
 import frappe
@@ -22,6 +22,9 @@ class RavenPushToken(Document):
 		fcm_token: DF.SmallText
 		user: DF.Link
 	# end: auto-generated types
+
+	def before_validate(self):
+		self.user = frappe.session.user
 
 	def after_insert(self):
 		"""

@@ -1,4 +1,4 @@
-# Copyright (c) 2024, The Commit Company (Algocode Technologies Pvt. Ltd.) and contributors
+# Copyright (c) 2026, Frappe Technologies Pvt. Ltd. and contributors
 # For license information, please see license.txt
 
 import frappe
@@ -23,17 +23,34 @@ class RavenWorkspace(Document):
 	# end: auto-generated types
 
 	def after_insert(self):
+		# A save can't change the name; only insert, rename and delete touch the cached list.
+		self.invalidate_workspace_list_cache()
 		if not frappe.flags.in_patch:
 			self.create_member_for_owner()
+
+	def after_rename(self, old, new, merge=False):
+		self.invalidate_workspace_list_cache()
+
+	def after_delete(self):
+		self.invalidate_workspace_list_cache()
+
+	def invalidate_workspace_list_cache(self):
+		from raven.api.workspaces import get_workspace_names
+
+		get_workspace_names.clear_cache()
 
 	def on_trash(self):
 		# Delete all members when the workspace is deleted
 		frappe.db.delete("Raven Workspace Member", {"workspace": self.name})
+
+		# Delete all pinned workspaces
+		frappe.db.delete("Raven User Pinned Workspaces", {"workspace": self.name})
+
 		# Delete all channels when the workspace is deleted
 		channels = frappe.db.get_all("Raven Channel", {"workspace": self.name})
 		for channel in channels:
 			# use delete doc to delete the channel ,it's members and messages
-			frappe.delete_doc("Raven Channel", channel.name)
+			frappe.delete_doc("Raven Channel", channel.name, delete_permanently=True)
 
 	def create_member_for_owner(self):
 		member = frappe.new_doc("Raven Workspace Member")

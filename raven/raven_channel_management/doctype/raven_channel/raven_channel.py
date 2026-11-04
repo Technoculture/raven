@@ -1,11 +1,16 @@
-# Copyright (c) 2023, The Commit Company and contributors
+# Copyright (c) 2026, Frappe Technologies Pvt. Ltd. and contributors
 # For license information, please see license.txt
 
 import frappe
 from frappe import _
 from frappe.model.document import Document
 
-from raven.utils import delete_channel_members_cache, get_raven_room
+from raven.api.workspaces import get_workspace_names
+from raven.utils import (
+	create_members_added_system_message,
+	delete_channel_members_cache,
+	get_raven_room,
+)
 
 
 class RavenChannel(Document):
@@ -21,6 +26,8 @@ class RavenChannel(Document):
 
 		channel_description: DF.SmallText | None
 		channel_name: DF.Data
+		dm_user_1: DF.Link | None
+		dm_user_2: DF.Link | None
 		is_ai_thread: DF.Check
 		is_archived: DF.Check
 		is_direct_message: DF.Check
@@ -29,9 +36,11 @@ class RavenChannel(Document):
 		is_synced: DF.Check
 		is_thread: DF.Check
 		last_message_details: DF.JSON | None
+		last_message_id: DF.Data | None
 		last_message_timestamp: DF.Datetime | None
 		linked_doctype: DF.Link | None
 		linked_document: DF.DynamicLink | None
+		members_can_only_view_own_messages: DF.Check
 		openai_thread_id: DF.Data | None
 		pinned_messages: DF.Table[RavenPinnedMessages]
 		pinned_messages_string: DF.SmallText | None
@@ -41,17 +50,29 @@ class RavenChannel(Document):
 	# end: auto-generated types
 
 	def on_trash(self):
+		self.remove_from_document_notifications()
+
+		# TODO: Delete all threads and polls inside this channel
 		# delete all members when channel is deleted
 		frappe.db.delete("Raven Channel Member", {"channel_id": self.name})
 
 		# delete all messages when channel is deleted
 		frappe.db.delete("Raven Message", {"channel_id": self.name})
 
+		# delete all scheduled messages when channel is deleted
+		frappe.db.delete("Raven Scheduled Message", {"channel_id": self.name})
+
 		# delete all reactions when channel is deleted
 		frappe.db.delete("Raven Message Reaction", {"channel_id": self.name})
 
+		# delete all reminders anchored in this channel
+		frappe.db.delete("Raven Reminder", {"channel_id": self.name})
+
 		# Delete the pinned channels
 		frappe.db.delete("Raven Pinned Channels", {"channel_id": self.name})
+
+		# Delete all channel groups
+		frappe.db.delete("Raven Grouped Channels", {"channel_id": self.name})
 
 		delete_channel_members_cache(self.name)
 
@@ -129,18 +150,90 @@ class RavenChannel(Document):
 				self.add_members(unique_raven_users)
 			else:
 				# Can ignore permissions here because the user who creates the channel should be an admin of the channel
-				frappe.get_doc(
+				creator_member = frappe.get_doc(
 					{
 						"doctype": "Raven Channel Member",
 						"channel_id": self.name,
 						"user_id": frappe.session.user,
 						"is_admin": 1,
 					}
-				).insert(ignore_permissions=True)
+				)
+				# The member's own "X joined." message is replaced by the dedicated
+				# "created" message below.
+				creator_member.flags.ignore_system_message = True
+				creator_member.insert(ignore_permissions=True)
+
+				creator_name = frappe.get_cached_value("Raven User", frappe.session.user, "full_name")
+				if self.is_thread:
+					# Threads get their own creation message (not the channel one).
+					frappe.get_doc(
+						{
+							"doctype": "Raven Message",
+							"channel_id": self.name,
+							"message_type": "System",
+							"text": f"{creator_name} created this thread.",
+							"json": frappe.as_json({"event": "thread_created", "user": frappe.session.user}),
+						}
+					).insert(ignore_permissions=True)
+				elif self.type != "Open":
+					# "X created <channel>" — not for Open channels (no membership
+					# system messages there, same as joins/adds).
+					frappe.get_doc(
+						{
+							"doctype": "Raven Message",
+							"channel_id": self.name,
+							"message_type": "System",
+							"text": f"{creator_name} created {self.channel_name}.",
+							"json": frappe.as_json(
+								{
+									"event": "channel_created",
+									"user": frappe.session.user,
+									"channel_name": self.channel_name,
+								}
+							),
+						}
+					).insert(ignore_permissions=True)
+
+	def remove_from_document_notifications(self):
+		"""Drop this channel from every notification that has it as a fixed recipient.
+		Left in place, the notification would fail on every send and could not be
+		saved. A notification with no recipients left is disabled."""
+		notifications = frappe.get_all(
+			"Raven Document Notification Recipients",
+			filters={"channel_type": "Channel", "variable_type": "Static", "value": self.name},
+			pluck="parent",
+			distinct=True,
+		)
+		for name in notifications:
+			notification = frappe.get_doc("Raven Document Notification", name)
+			notification.recipients = [
+				recipient
+				for recipient in notification.recipients
+				if not (recipient.channel_type == "Channel" and recipient.value == self.name)
+			]
+			if not notification.recipients:
+				# Recipients is a required table. Enabling it again asks for one.
+				notification.enabled = 0
+				notification.flags.ignore_mandatory = True
+			notification.save(ignore_permissions=True)
 
 	def validate(self):
 		# If the user trying to modify the channel is not the owner or channel member, then don't allow
 		old_doc = self.get_doc_before_save()
+
+		if self.members_can_only_view_own_messages and (
+			self.type != "Private" or self.is_direct_message or self.is_thread or self.is_dm_thread
+		):
+			frappe.throw(
+				_("Sender-private visibility is only available for regular private channels."),
+				frappe.ValidationError,
+			)
+		if (
+			self.members_can_only_view_own_messages
+			and old_doc
+			and not old_doc.get("members_can_only_view_own_messages")
+		):
+			self.last_message_details = None
 
 		if self.is_direct_message == 1:
 			if old_doc:
@@ -172,7 +265,7 @@ class RavenChannel(Document):
 					_("You don't have permission to archive/unarchive this channel"),
 					frappe.PermissionError,
 				)
-		if not self.flags.is_created_by_bot:
+		if not self.flags.is_created_by_bot and not self.flags.ignore_channel_member_check:
 			if self.type == "Private" or self.type == "Public":
 				if (
 					self.owner == frappe.session.user
@@ -203,13 +296,31 @@ class RavenChannel(Document):
 
 		if self.is_direct_message == 1:
 			self.type = "Private"
+			users = self.channel_name.split(" _ ")
+			# A DM is between two users, or one user for notes to self.
+			# Every name here is added as a member, so more names would let
+			# someone join another user's DM.
+			if len(users) > 2:
+				frappe.throw(_("A direct message can only be between two users."))
+			if len(users) == 2:
+				# Canonical order - user1 > user_2(alphabetically)
+				if users[0] > users[1]:
+					self.dm_user_1, self.dm_user_2 = users[0], users[1]
+				else:
+					self.dm_user_1, self.dm_user_2 = users[1], users[0]
+			else:
+				self.dm_user_1 = self.dm_user_2 = users[0]
+
 		if self.is_direct_message == 0:
 			self.channel_name = self.channel_name.strip().lower().replace(" ", "-")
+			# The unique index on these two columns only ignores NULL. An empty
+			# string would make every second channel or thread a duplicate.
+			self.dm_user_1 = self.dm_user_2 = None
 
 		if not self.is_direct_message and not self.workspace and not self.is_dm_thread:
-			workspaces = frappe.get_all("Raven Workspace")
+			workspaces = get_workspace_names()
 			if len(workspaces) == 1:
-				self.workspace = workspaces[0].name
+				self.workspace = next(iter(workspaces))
 
 		self.set_pinned_messages_string()
 
@@ -218,6 +329,7 @@ class RavenChannel(Document):
 
 	def add_members(self, members, is_admin=0):
 		# members is a list of Raven User IDs
+		added = []
 		for member in members:
 			doc = frappe.db.exists(
 				"Raven Channel Member",
@@ -234,11 +346,37 @@ class RavenChannel(Document):
 						"is_admin": is_admin,
 					}
 				)
+				# One combined system message for the whole batch is sent below —
+				# per-member messages would flood the channel.
+				channel_member.flags.ignore_system_message = True
 				channel_member.insert(ignore_permissions=True)
+				added.append(member)
+
+		# ONE "A added B, C and n others" message for the whole action, listing only
+		# the members actually added (existing ones are skipped above). Same
+		# visibility rule as single additions: no system messages in DMs or Open channels.
+		if added and not self.is_direct_message and self.type != "Open":
+			create_members_added_system_message(self.name, added)
 
 	def autoname(self):
 		if self.is_direct_message == 0 and self.is_thread == 0:
 			# Add workspace name to the channel name
-			self.name = self.workspace + "-" + self.channel_name.strip().lower().replace(" ", "-")
+			self.name = (
+				self.workspace.lower().replace(" ", "-")
+				+ "-"
+				+ self.channel_name.strip().lower().replace(" ", "-")
+			)
 		elif self.is_thread:
 			self.name = self.channel_name
+
+
+def on_doctype_update():
+	"""
+	Add unique constraint on dm_user_1 and dm_user_2 to prevent duplicate DM channels.
+	NULL values are ignored by MySQL/MariaDB unique constraints, so this only affects DM channels.
+	"""
+	frappe.db.add_unique(
+		"Raven Channel",
+		fields=["dm_user_1", "dm_user_2"],
+		constraint_name="unique_dm_channel",
+	)
