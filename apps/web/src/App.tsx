@@ -198,7 +198,7 @@ function App({ native }: { native?: NativeProvider }) {
           url={native?.url ?? (import.meta.env.VITE_FRAPPE_PATH ?? '')}
           tokenParams={native ? { useToken: true, type: "Bearer", token: native.getToken } : undefined}
           customHeaders={native ? APP_HEADERS : undefined}
-          socketPort={import.meta.env.VITE_SOCKET_PORT ? import.meta.env.VITE_SOCKET_PORT : undefined}
+          socketPort={import.meta.env.VITE_SOCKET_PORT || (import.meta.env.PROD ? window.location.port : undefined)}
           swrConfig={{
             // NO global errorRetryCount: SWR's default retry is UNLIMITED
             // exponential backoff, and that's what we want for the fetches
