@@ -77,6 +77,9 @@ jobs:
       - name: Setup
         run: |
           bash ${GITHUB_WORKSPACE}/.github/helper/install_dependencies.sh
+          # The disposable CI database has no TLS; include clients invoked by Bench.
+          printf '[client]\nskip-ssl\n' > "$HOME/.my.cnf"
+          chmod 600 "$HOME/.my.cnf"
           pip install frappe-bench
           bench init --skip-redis-config-generation --skip-assets --python "$(which python)" ~/frappe-bench
           mysql --skip-ssl --host 127.0.0.1 --port 3306 -u root -proot -e "SET GLOBAL character_set_server = 'utf8mb4'"
