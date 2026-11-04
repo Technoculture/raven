@@ -51,6 +51,7 @@ class RavenSearch(SQLiteSearch):
 	INDEXABLE_DOCTYPES = {
 		"Raven Message": {
 			"fields": [
+				"name",
 				"content",
 				"channel_id",
 				"owner",
