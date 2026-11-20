@@ -239,6 +239,23 @@ def delete_workspace_members_cache(workspace_id: str):
 	frappe.cache().delete_value(cache_key)
 
 
+def _get_member_by_user(members: dict, user: str):
+	"""Match the case-insensitive email identity used by Frappe's user links.
+
+	Keep the cached map unchanged: its keys are also used for notifications.
+	Only return an existing member; never add access for a missing user.
+	"""
+	if user in members:
+		return members[user]
+	if not user or "@" not in user:
+		return None
+	identity = user.casefold()
+	for member_user, member in members.items():
+		if member_user.casefold() == identity:
+			return member
+	return None
+
+
 def get_workspace_member(workspace_id: str, user: str = None) -> dict:
 	"""
 	Get the workspace member ID
@@ -246,7 +263,7 @@ def get_workspace_member(workspace_id: str, user: str = None) -> dict:
 	if not user:
 		user = frappe.session.user
 
-	return get_workspace_members(workspace_id).get(user, None)
+	return _get_member_by_user(get_workspace_members(workspace_id), user)
 
 
 def is_workspace_member(workspace_id: str, user: str = None) -> bool:
@@ -258,7 +275,7 @@ def is_workspace_member(workspace_id: str, user: str = None) -> bool:
 
 	all_members = get_workspace_members(workspace_id)
 
-	return user in all_members
+	return _get_member_by_user(all_members, user) is not None
 
 
 def get_channel_members(channel_id: str):
@@ -333,7 +350,7 @@ def get_channel_member(channel_id: str, user: str = None) -> dict:
 
 	all_members = get_channel_members(channel_id)
 
-	return all_members.get(user, None)
+	return _get_member_by_user(all_members, user)
 
 
 def is_channel_member(channel_id: str, user: str = None) -> bool:
@@ -343,7 +360,7 @@ def is_channel_member(channel_id: str, user: str = None) -> bool:
 	if not user:
 		user = frappe.session.user
 
-	return user in get_channel_members(channel_id)
+	return _get_member_by_user(get_channel_members(channel_id), user) is not None
 
 
 def desk_has_raven_icon() -> bool:
